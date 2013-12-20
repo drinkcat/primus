@@ -6,7 +6,7 @@
 
 # Verbosity level
 # 0: only errors, 1: warnings (default), 2: profiling
-# export PRIMUS_VERBOSE=${PRIMUS_VERBOSE:-1}
+export PRIMUS_VERBOSE=${PRIMUS_VERBOSE:-1}
 
 # Upload/display method
 # 0: autodetect, 1: textures, 2: PBO/glDrawPixels (needs Mesa-10.1+)
@@ -16,7 +16,7 @@
 # export PRIMUS_SLEEP=${PRIMUS_SLEEP:-90}
 
 # Secondary display
-# export PRIMUS_DISPLAY=${PRIMUS_DISPLAY:-:8}
+export PRIMUS_DISPLAY=${PRIMUS_DISPLAY:-:0}
 
 # "Accelerating" libGL
 # $LIB will be interpreted by the dynamic linker

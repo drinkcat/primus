@@ -13,13 +13,13 @@ PRIMUS_SYNC        ?= 0
 PRIMUS_VERBOSE     ?= 1
 PRIMUS_UPLOAD      ?= 0
 PRIMUS_SLEEP       ?= 90
-PRIMUS_DISPLAY     ?= :8
+PRIMUS_DISPLAY     ?= :1
 PRIMUS_LOAD_GLOBAL ?= libglapi.so.0
-PRIMUS_libGLa      ?= /usr/$$LIB/nvidia/libGL.so.1
-PRIMUS_libGLd      ?= /usr/$$LIB/libGL.so.1
+PRIMUS_libGLa      ?= /usr/$$LIB/./libEGL.so.1
+PRIMUS_libGLd      ?= /usr/$$LIB/libEGL.so.1
 
 #CXXFLAGS += -DBUMBLEBEE_SOCKET='"$(BUMBLEBEE_SOCKET)"'
-CXXFLAGS += -DPRIMUS_STRICT='"$(PRIMUS_STRICT)"'
+#CXXFLAGS += -DPRIMUS_STRICT='"$(PRIMUS_STRICT)"'
 CXXFLAGS += -DPRIMUS_SYNC='"$(PRIMUS_SYNC)"'
 CXXFLAGS += -DPRIMUS_VERBOSE='"$(PRIMUS_VERBOSE)"'
 CXXFLAGS += -DPRIMUS_UPLOAD='"$(PRIMUS_UPLOAD)"'
@@ -29,13 +29,13 @@ CXXFLAGS += -DPRIMUS_LOAD_GLOBAL='"$(PRIMUS_LOAD_GLOBAL)"'
 CXXFLAGS += -DPRIMUS_libGLa='"$(PRIMUS_libGLa)"'
 CXXFLAGS += -DPRIMUS_libGLd='"$(PRIMUS_libGLd)"'
 
-all: $(LIBDIR)/libGL.so.1 $(LIBDIR)/libEGL.so.1
+all: $(LIBDIR)/libGL.so.1 $(LIBDIR)/libGLESv2.so.2
 	
 
 $(LIBDIR)/libGL.so.1: libglfork.cpp
 	mkdir -p $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt
 
-$(LIBDIR)/libEGL.so.1: libeglfork.cpp
+$(LIBDIR)/libGLESv2.so.2: libeglfork.cpp
 	mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt
+	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt -O0 -g

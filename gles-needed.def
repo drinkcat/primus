@@ -1,10 +1,11 @@
 // OpenGL extension functions needed by primus itself
 DEF_EGL_PROTO(void, glGenBuffers, (GLsizei n, GLuint* buffers),n,buffers)
 DEF_EGL_PROTO(void, glDeleteBuffers, (GLsizei n, const GLuint* buffers),n,GLuint*)
-DEF_EGL_PROTO(EGLBoolean, eglDestroyContext, (EGLDisplay dpy, EGLContext ctx),ctx)
 DEF_EGL_PROTO(void, glBindBuffer, (GLenum target, GLuint buffer),target,buffer)
 DEF_EGL_PROTO(void, glBufferData, (GLenum target, GLsizeiptr size, const GLvoid* data, GLenum usage),target,size,GLvoid*,usage)
 DEF_EGL_PROTO(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid* data),target,offset,size,GLvoid*)
 DEF_EGL_PROTO(GLboolean, glUnmapBuffer, (GLenum target),target)
 DEF_EGL_PROTO(void, glWaitSync, (GLsync sync, GLbitfield flags, GLuint64 timeout),sync,flags,timeout)
 DEF_EGL_PROTO(GLvoid*, glMapBufferRange, (GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access),target,offset,length,access)
+DEF_EGL_PROTO(GLsync, glFenceSync, (GLenum condition, GLbitfield flags),condition,flags)
+DEF_EGL_PROTO(void, glDeleteSync, (GLsync sync),sync)
