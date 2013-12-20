@@ -1,0 +1,3 @@
+// EGL functions which need to be simply forwarded
+DEF_EGL_PROTO(EGLBoolean, eglChooseConfig, (EGLDisplay dpy, const EGLint *attrib_list,
+EGLConfig *configs, EGLint config_size, EGLint *num_config), attrib_list, configs, config_size, num_config);

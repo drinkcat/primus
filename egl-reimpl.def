@@ -1,0 +1,5 @@
+// GLX Functions implemented by primus
+DEF_EGL_PROTO(__eglMustCastToProperFunctionPointerType, eglGetProcAddress, (const char* procname))
+DEF_EGL_PROTO(EGLContext, eglCreateContext, (EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint *attrib_list),config,share_context,EGLint)
+DEF_EGL_PROTO(EGLBoolean, eglMakeCurrent, (EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx),draw,read,ctx)
+DEF_EGL_PROTO(EGLBoolean, eglSwapBuffers, (EGLDisplay dpy, EGLSurface surface),surface)
