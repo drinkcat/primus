@@ -1,1 +1,3 @@
 DEF_EGL_PROTO(void, glViewport, (GLint x, GLint y, GLsizei width, GLsizei height),x,y,width,height)
+DEF_EGL_PROTO(void, glReadBuffer,(GLenum mode), mode)
+DEF_EGL_PROTO(void, glReadPixels, (GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, GLenum type, GLvoid* pixels),x,y,width,height,format,type,pixels)

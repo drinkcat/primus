@@ -87,7 +87,7 @@ struct DrawableInfo {
   int width, height;
   enum ReinitTodo {NONE, RESIZE, SHUTDOWN} reinit;
   void *pixeldata;
-    //GLsync sync;
+  GLsync sync;
   EGLContext actx;
 
   struct {
@@ -205,7 +205,7 @@ struct EarlyInitializer {
     die_if(c[0] != 'Y', "failure contacting Bumblebee daemon\n");
     // the socket will be closed when the application quits, then bumblebee will shut down the secondary X
 #else
-#warning Building without Bumblebee daemon support
+//#warning Building without Bumblebee daemon support
 #endif
   }
 };
@@ -378,9 +378,10 @@ static void* display_work(void *vd)
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
   int width, height;
-  static const float quad_vertex_coords[]  = {-1, -1, -1, 1, 1, 1, 1, -1};
-  static const float quad_texture_coords[] = { 0,  0,  0, 1, 1, 1, 1,  0};
-  GLuint textures[2] = {0}, pbos[2] = {0};
+  //static const float quad_vertex_coords[]  = {-1, -1, -1, 1, 1, 1, 1, -1};
+  //static const float quad_texture_coords[] = { 0,  0,  0, 1, 1, 1, 1,  0};
+  //GLuint textures[2] = {0}, 
+  GLuint pbos[2] = {0};
   int ctex = 0;
   static const char *state_names[] = {"wait", "upload", "draw+swap", NULL};
   Profiler profiler("display", state_names);
@@ -501,6 +502,7 @@ static void* display_work(void *vd)
 
 static void* readback_work(void *vd)
 {
+  EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE, EGL_NONE };
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
   int width, height;
@@ -512,10 +514,10 @@ static void* readback_work(void *vd)
   struct timespec tp;
   if (!primus.sync)
     sem_post(&di.d.relsem); // No PBO is mapped initially
-  EGLContext context = primus.afns.glXCreateNewContext(primus.adpy, di.fbconfig, GLX_RGBA_TYPE, di.actx, True);
-  die_if(!primus.afns.glXIsDirect(primus.adpy, context),
-	 "failed to acquire direct rendering context for readback thread\n");
-  primus.afns.glXMakeCurrent(primus.adpy, di.pbuffer, context);
+  EGLContext context = primus.afns.eglCreateContext(primus.adpy, di.fbconfig, EGL_NO_CONTEXT, contextAttribs);
+/*  die_if(!primus.afns.glXIsDirect(primus.adpy, context),
+    "failed to acquire direct rendering context for readback thread\n");*/
+  primus.afns.eglMakeCurrent(primus.adpy, di.pbuffer, di.pbuffer, context);
   primus.afns.glGenBuffers(2, &pbos[0]);
   primus.afns.glReadBuffer(GL_FRONT);
   for (;;)
@@ -541,33 +543,34 @@ static void* readback_work(void *vd)
 	sem_post(&di.d.relsem); // Unlock as no PBO is currently mapped
       if (di.r.reinit == di.SHUTDOWN)
       {
-	primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER_EXT, pbos[cbuf ^ 1]);
-	primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER_EXT);
+	primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
+	primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
 	primus.afns.glDeleteBuffers(2, &pbos[0]);
-	primus.afns.glXMakeCurrent(primus.adpy, 0, NULL);
-	primus.afns.glXDestroyContext(primus.adpy, context);
+	primus.afns.eglMakeCurrent(primus.adpy, 0, 0, NULL);
+	primus.afns.eglDestroyContext(primus.adpy, context);
 	sem_post(&di.r.relsem);
 	return NULL;
       }
       di.r.reinit = di.NONE;
       profiler.width = width = di.width;
       profiler.height = height = di.height;
-      primus.afns.glXMakeCurrent(primus.adpy, di.pbuffer, context);
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER_EXT, pbos[cbuf ^ 1]);
-      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER_EXT, width*height*4, NULL, GL_STREAM_READ);
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER_EXT, pbos[cbuf]);
-      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER_EXT, width*height*4, NULL, GL_STREAM_READ);
+      primus.afns.eglMakeCurrent(primus.adpy, di.pbuffer, di.pbuffer, context);
+      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
+      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
+      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
+      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
     }
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
-    primus.afns.glReadPixels(0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+    primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     if (!primus.sync)
       sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     usleep(sleep_usec);
     profiler.tick();
     if (primus.sync == 1) // Get the previous framebuffer
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER_EXT, pbos[cbuf ^ 1]);
+      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
     double map_time = Profiler::get_timestamp();
-    GLvoid *pixeldata = primus.afns.glMapBuffer(GL_PIXEL_PACK_BUFFER_EXT, GL_READ_ONLY);
+    GLvoid *pixeldata = primus.afns.glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0,
+                                                     width*height*4, GL_MAP_READ_BIT);
     map_time = Profiler::get_timestamp() - map_time;
     sleep_usec = (map_time * 1e6 + sleep_usec) * primus.autosleep / 100;
     profiler.tick();
@@ -585,9 +588,9 @@ static void* readback_work(void *vd)
 	sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
       }
       cbuf ^= 1;
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER_EXT, pbos[cbuf]);
+      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
     }
-    primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER_EXT);
+    primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     profiler.tick();
   }
   return NULL;

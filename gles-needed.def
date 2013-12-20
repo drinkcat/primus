@@ -5,3 +5,6 @@ DEF_EGL_PROTO(EGLBoolean, eglDestroyContext, (EGLDisplay dpy, EGLContext ctx),ct
 DEF_EGL_PROTO(void, glBindBuffer, (GLenum target, GLuint buffer),target,buffer)
 DEF_EGL_PROTO(void, glBufferData, (GLenum target, GLsizeiptr size, const GLvoid* data, GLenum usage),target,size,GLvoid*,usage)
 DEF_EGL_PROTO(void, glBufferSubData, (GLenum target, GLintptr offset, GLsizeiptr size, const GLvoid* data),target,offset,size,GLvoid*)
+DEF_EGL_PROTO(GLboolean, glUnmapBuffer, (GLenum target),target)
+DEF_EGL_PROTO(void, glWaitSync, (GLsync sync, GLbitfield flags, GLuint64 timeout),sync,flags,timeout)
+DEF_EGL_PROTO(GLvoid*, glMapBufferRange, (GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access),target,offset,length,access)
