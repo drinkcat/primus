@@ -24,8 +24,18 @@
 #define primus_warn(...) primus_print(primus.loglevel >= 1, "warning: " __VA_ARGS__)
 #define primus_perf(...) primus_print(primus.loglevel >= 2, "profiling: " __VA_ARGS__)
 
+// Pointers to implemented/forwarded GLX and OpenGL functions
+struct CapturedFns {
+//  void *handle;
+
+private:
+    int handlecount;
+    void *handle[16];
+    typedef void* (*dlsym_fn)(void *, const char*);
+    dlsym_fn pdlsym;
+
 // Try to load any of the colon-separated libraries
-static void *mdlopen(const char *paths, int flag)
+void mdlopen(const char *paths, int flag)
 {
   char *p = strdupa(paths);
   char errors[1024], *errors_ptr = errors, *errors_end = errors + 1024;
@@ -34,24 +44,35 @@ static void *mdlopen(const char *paths, int flag)
     if ((c = strchr(p, ':')))
       *c = 0;
     die_if(p[0] != '/', "need absolute library path: %s\n", p);
-    void *handle = dlopen(p, flag);
-    if (handle)
-      return handle;
+    void *c_handle = dlopen(p, flag);
+    if (c_handle) {
+      handle[handlecount] = c_handle;
+      handlecount++;
+      if (handlecount == 16)
+          break;
+    }
     errors_ptr += snprintf(errors_ptr, errors_end - errors_ptr, "%s\n", dlerror());
   }
-  die_if(true, "failed to load any of the libraries: %s\n%s", paths, errors);
+  die_if(handlecount == 0, "failed to load any of the libraries: %s\n%s", paths, errors);
 }
 
-static void *real_dlsym(void *handle, const char *symbol)
+public:
+    int handle_valid() {
+        return handlecount > 0;
+    }
+
+void *dlsym(const char *symbol)
 {
-  typedef void* (*dlsym_fn)(void *, const char*);
-  static dlsym_fn pdlsym = (dlsym_fn) dlsym(dlopen("libdl.so.2", RTLD_LAZY), "dlsym");
-  return pdlsym(handle, symbol);
+    printf("Loading %s\n", symbol);
+    int i;
+    for (i = 0; i < handlecount; i++) {
+        void* p = pdlsym(handle[i], symbol);
+        if (p)
+            return p;
+    }
+    return NULL;
 }
 
-// Pointers to implemented/forwarded GLX and OpenGL functions
-struct CapturedFns {
-  void *handle;
   // Declare functions as fields of the struct
 #define DEF_EGL_PROTO(ret, name, args, ...) ret (*name) args;
 #include "egl-reimpl.def"
@@ -61,10 +82,12 @@ struct CapturedFns {
 #undef DEF_EGL_PROTO
   CapturedFns(const char *lib)
   {
+    handlecount = 0;
+    pdlsym = (dlsym_fn)::dlsym(dlopen("libdl.so.2", RTLD_LAZY), "dlsym");
     printf("lib=%s\n", lib);
-    handle = mdlopen(lib, RTLD_LAZY);
+    mdlopen(lib, RTLD_LAZY);
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
-name = (ret (*) args)real_dlsym(handle, #name); \
+name = (ret (*) args)dlsym(#name); \
 printf("%s=%p\n", #name, name);                 \
   } while (0);
 #include "egl-reimpl.def"
@@ -80,7 +103,10 @@ printf("B %s=%p\n", #name, name);                 \
   }
   ~CapturedFns()
   {
-    dlclose(handle);
+    int i;
+    for (i = 0; i < handlecount; i++) {
+        dlclose(handle[i]);
+    }
   }
 };
 
@@ -275,7 +301,7 @@ static struct PrimusInfo {
             EGL_ALPHA_SIZE,     EGL_DONT_CARE,
             EGL_DEPTH_SIZE,     EGL_DONT_CARE,
             EGL_STENCIL_SIZE,   EGL_DONT_CARE,
-            EGL_SAMPLE_BUFFERS, 0,
+            EGL_SAMPLE_BUFFERS, 1,
             EGL_NONE
         };
 
@@ -973,7 +999,7 @@ void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
     printf("OGL Calling %s\n", #name);                                            \
-void* val = primus.afns.handle ? real_dlsym(primus.afns.handle, #name) : (void*)l##name; \
+    void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : (void*)l##name; \
     printf("Val %p\n", val);                                            \
     return val;\
 }
@@ -1070,8 +1096,8 @@ asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
-    printf("Calling %s\n", #name);                                            \
-void* val = primus.afns.handle ? real_dlsym(primus.afns.handle, #name) : NULL; \
+    printf("non-strict Calling %s\n", #name);                                            \
+    void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : NULL; \
     printf("Val %p\n", val);                                            \
     return val;\
 }

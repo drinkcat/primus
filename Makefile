@@ -15,7 +15,7 @@ PRIMUS_UPLOAD      ?= 0
 PRIMUS_SLEEP       ?= 90
 PRIMUS_DISPLAY     ?= :1
 PRIMUS_LOAD_GLOBAL ?= libglapi.so.0
-PRIMUS_libGLa      ?= /usr/$$LIB/./libEGL.so.1
+PRIMUS_libGLa      ?= /usr/$$LIB/./libEGL.so.1:/usr/$$LIB/./libGLESv2.so.2
 PRIMUS_libGLd      ?= /usr/$$LIB/libEGL.so.1
 
 #CXXFLAGS += -DBUMBLEBEE_SOCKET='"$(BUMBLEBEE_SOCKET)"'
