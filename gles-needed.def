@@ -9,4 +9,4 @@ DEF_EGL_PROTO(void, glWaitSync, (GLsync sync, GLbitfield flags, GLuint64 timeout
 DEF_EGL_PROTO(GLvoid*, glMapBufferRange, (GLenum target, GLintptr offset, GLsizeiptr length, GLbitfield access),target,offset,length,access)
 DEF_EGL_PROTO(GLsync, glFenceSync, (GLenum condition, GLbitfield flags),condition,flags)
 DEF_EGL_PROTO(void, glDeleteSync, (GLsync sync),sync)
-DEF_EGL_PROTO(EGLBoolean, eglGetConfigs, (EGLDisplay dpy, EGLConfig *configs, EGLint config_size, EGLint *num_config),configs,config_size,num_config)
+

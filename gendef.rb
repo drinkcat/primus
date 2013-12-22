@@ -2,7 +2,7 @@
 data = File.open("/usr/include/GLES3/gl3.h").to_a.join.gsub(/[\n\t]/, ' ').split(/;/)
 
 data.each{ |statement|
-  puts statement
+#  puts statement
 #  next if (!statement.match(/^ *EGLAPI.*/))
   next if (!statement.match(/^ *GL_APICALL.*/))
   statement.gsub!(/ +/, ' ')
@@ -24,7 +24,7 @@ data.each{ |statement|
       p = p[1..(p.length-1)]
     end
     if (p.length > 0) then
-      extra = "," + p.map{|x| x[1]}.join(',')
+      extra = "," + p.map{|x| x[x.length-1].gsub(/\*/, '')}.join(',')
     end
   end
 

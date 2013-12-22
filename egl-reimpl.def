@@ -9,3 +9,8 @@ DEF_EGL_PROTO(EGLSurface, eglCreateWindowSurface, (EGLDisplay dpy, EGLConfig con
 DEF_EGL_PROTO(EGLBoolean, eglDestroySurface, (EGLDisplay dpy, EGLSurface surface),surface)
 DEF_EGL_PROTO(EGLContext, eglGetCurrentContext, (void))
 DEF_EGL_PROTO(EGLBoolean, eglDestroyContext, (EGLDisplay dpy, EGLContext ctx),ctx)
+/* FIXME: I think eglGetDisplay can be hacked to return the proper EGLDisplay and remove a
+ * lot of other hacks...  */
+DEF_EGL_PROTO(EGLDisplay, eglGetDisplay, (EGLNativeDisplayType display_id),display_id)
+/* FIXME: Those are actually no-ops.. */
+DEF_EGL_PROTO(EGLBoolean, eglBindAPI, (EGLenum api),api)

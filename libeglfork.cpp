@@ -63,7 +63,7 @@ public:
 
 void *dlsym(const char *symbol)
 {
-    printf("Loading %s\n", symbol);
+    //printf("Loading %s\n", symbol);
     int i;
     for (i = 0; i < handlecount; i++) {
         void* p = pdlsym(handle[i], symbol);
@@ -114,8 +114,9 @@ printf("B %s=%p\n", #name, name);                 \
 struct DrawableInfo {
   // Only XWindow is not explicitely created via GLX
   enum {XWindow, Window, Pixmap, Pbuffer} kind;
-  EGLConfig fbconfig;
+  EGLConfig config;
   EGLSurface  pbuffer;
+  EGLContext maincontext; /* Context in main thread */
   Drawable window;
   EGLSurface windowsurface;
   int width, height;
@@ -175,7 +176,7 @@ struct DrawablesInfo: public std::map<EGLSurface, DrawableInfo> {
 };
 
 struct ContextInfo {
-  EGLConfig fbconfig;
+  EGLConfig config;
   int sharegroup;
 };
 
@@ -301,26 +302,33 @@ static struct PrimusInfo {
             EGL_ALPHA_SIZE,     EGL_DONT_CARE,
             EGL_DEPTH_SIZE,     EGL_DONT_CARE,
             EGL_STENCIL_SIZE,   EGL_DONT_CARE,
-            EGL_SAMPLE_BUFFERS, 1,
+            EGL_SAMPLE_BUFFERS, 0,
             EGL_NONE
         };
 
    EGLint majorVersion;
    EGLint minorVersion;
+   EGLBoolean ret;
 
-    adisplay = eglGetDisplay((EGLNativeDisplayType)adpy);
-    ddisplay = eglGetDisplay((EGLNativeDisplayType)ddpy);
+   printf("PRIMUS INIT\n");
 
-    //eglInitialize(adisplay, &majorVersion, &minorVersion);
-    eglInitialize(ddisplay, &majorVersion, &minorVersion);
+   //adisplay = afns.eglGetDisplay((EGLNativeDisplayType)adpy);
+    ddisplay = dfns.eglGetDisplay((EGLNativeDisplayType)ddpy);
+
+    //afns.eglInitialize(adisplay, &majorVersion, &minorVersion);
+    ret = dfns.eglInitialize(ddisplay, &majorVersion, &minorVersion);
+    die_if(!ret, "broken EGL on main X display (eglInitialize)\n");
 
     /* FIXME: Do we need the list of config? Or just the first one? */
 /*    die_if(!eglGetConfigs(ddpy, NULL, 0, &ncfg),
       "broken EGL on main X display\n");*/
     dconfigs = (EGLConfig*)malloc(sizeof(EGLConfig));
-    eglGetConfigs(ddisplay, NULL, 0, &ncfg);
-    EGLBoolean ret = dfns.eglChooseConfig(ddisplay, attrs, dconfigs, 1, &ncfg);
-    die_if(!ret, "broken EGL on main X display (config)\n");
+    ret = dfns.eglGetConfigs(ddisplay, NULL, 0, &ncfg);
+    die_if(!ret, "broken EGL on main X display (getconfig)\n");
+    ret = dfns.eglChooseConfig(ddisplay, attrs, dconfigs, 1, &ncfg);
+    die_if(!ret || ncfg == 0, "broken EGL on main X display (chooseconfig)\n");
+
+   printf("PRIMUS INIT DONE\n");
   }
 } primus;
 
@@ -328,7 +336,7 @@ static struct PrimusInfo {
 static __thread struct {
   Display *dpy;
   EGLSurface drawable, read_drawable;
-  void make_current(Display *dpy, EGLSurface draw, EGLSurface read)
+    void make_current(Display *dpy, EGLSurface draw, EGLSurface read)
   {
     this->dpy = dpy;
     this->drawable = draw;
@@ -431,28 +439,170 @@ static bool test_drawpixels_fast(Display *dpy, EGLContext ctx)
 }
 #endif
 
+//GLuint init_display_program()
+//GLuint load_shader( GLenum type, const char *shaderSrc );
+
+///
+// Create a shader object, load the shader source, and
+// compile the shader.
+//
+static GLuint load_shader( GLenum type, const char *shaderSrc )
+{
+   GLuint shader;
+   GLint compiled;
+
+   // Create the shader object
+   shader = primus.dfns.glCreateShader ( type );
+
+   // Load the shader source
+   primus.dfns.glShaderSource ( shader, 1, &shaderSrc, NULL );
+   
+   // Compile the shader
+   primus.dfns.glCompileShader ( shader );
+
+   // Check the compile status
+   primus.dfns.glGetShaderiv ( shader, GL_COMPILE_STATUS, &compiled );
+
+   if ( !compiled ) 
+   {
+      GLint infoLen = 0;
+
+      primus.dfns.glGetShaderiv ( shader, GL_INFO_LOG_LENGTH, &infoLen );
+      
+      if ( infoLen > 1 )
+      {
+          char* infoLog = (char*)malloc (sizeof(char) * infoLen );
+
+         primus.dfns.glGetShaderInfoLog ( shader, infoLen, NULL, infoLog );
+         printf ( "Error compiling shader:\n%s\n", infoLog );
+         
+         free ( infoLog );
+      }
+
+      primus.dfns.glDeleteShader ( shader );
+      return 0;
+   }
+
+   return shader;
+}
+
+static GLuint init_display_program()
+{
+   const char* vShaderStr =  
+      "attribute vec4 vPosition;    \n"
+      "attribute vec2 vTexture;    \n"
+      "varying vec2 vTexCoord;\n"
+      "void main()                  \n"
+      "{                            \n"
+      "   gl_Position = vPosition;  \n"
+      "   vTexCoord = vTexture;  \n"
+      "}                            \n";
+   
+   const char* fShaderStr =  
+      "precision mediump float;\n"
+      "uniform sampler2D uTexture;\n"
+      "varying vec2 vTexCoord;\n"
+      "void main()                                  \n"
+      "{                                            \n"
+      "  gl_FragColor = texture2D(uTexture, vTexCoord);\n"
+      "}                                            \n";
+
+   GLuint vertexShader;
+   GLuint fragmentShader;
+   GLuint programObject;
+   GLint linked;
+
+   // Load the vertex/fragment shaders
+   vertexShader = load_shader ( GL_VERTEX_SHADER, vShaderStr );
+   fragmentShader = load_shader ( GL_FRAGMENT_SHADER, fShaderStr );
+
+   // Create the program object
+   programObject = primus.dfns.glCreateProgram ( );
+   
+if ( programObject == 0 ) {
+printf("po=0\n");
+      return 0;
+}
+
+   primus.dfns.glAttachShader ( programObject, vertexShader );
+   primus.dfns.glAttachShader ( programObject, fragmentShader );
+
+   // Bind vPosition to attribute 0   
+   primus.dfns.glBindAttribLocation ( programObject, 0, "vPosition" );
+
+   // Link the program
+   primus.dfns.glLinkProgram ( programObject );
+
+   // Check the link status
+   primus.dfns.glGetProgramiv ( programObject, GL_LINK_STATUS, &linked );
+
+   if ( !linked ) 
+   {
+      GLint infoLen = 0;
+
+      primus.dfns.glGetProgramiv ( programObject, GL_INFO_LOG_LENGTH, &infoLen );
+      
+      if ( infoLen > 1 )
+      {
+          char* infoLog = (char*)malloc (sizeof(char) * infoLen );
+
+         primus.dfns.glGetProgramInfoLog ( programObject, infoLen, NULL, infoLog );
+         printf ( "Error linking program:\n%s\n", infoLog );            
+         
+         free ( infoLog );
+      }
+
+      primus.dfns.glDeleteProgram ( programObject );
+      return 0;
+   }
+
+   primus.dfns.glClearColor ( 0.0f, 0.0f, 0.0f, 0.0f );
+   return programObject;
+}
+
+
 static void* display_work(void *vd)
 {
+  printf("primus display_work\n");
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
   int width, height;
-  //static const float quad_vertex_coords[]  = {-1, -1, -1, 1, 1, 1, 1, -1};
-  //static const float quad_texture_coords[] = { 0,  0,  0, 1, 1, 1, 1,  0};
-  //GLuint textures[2] = {0}, 
+  GLuint program;
+  static const float quad_vertex_coords[]  = {-1, -1, 0, -1,  1, 0, 1, 1, 0,
+                                              -1, -1, 0,  1, -1, 0, 1, 1, 0};
+  static const float quad_texture_coords[] = { 0, 0, 0, 1, 1, 1,
+                                               0, 0, 1, 0, 1, 1};
+  GLint iVertex, iTexture, iTextureUniform;
+  GLuint textures[2] = {0};
   GLuint pbos[2] = {0};
   int ctex = 0;
   static const char *state_names[] = {"wait", "upload", "draw+swap", NULL};
   Profiler profiler("display", state_names);
-  Display *ddpy = XOpenDisplay(NULL);
+  //Display *ddpy = XOpenDisplay(NULL);
+  Display * ddpy = primus.ddpy;
   assert(di.kind == di.XWindow || di.kind == di.Window);
   XSelectInput(ddpy, di.window, StructureNotifyMask);
   note_geometry(ddpy, di.window, &width, &height);
   di.update_geometry(width, height);
   EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE, EGL_NONE };  
 
-  EGLDisplay ddisplay = eglGetDisplay((EGLNativeDisplayType)ddpy);
+  //EGLDisplay ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)ddpy);
+  EGLDisplay ddisplay = primus.ddisplay;
+
+   EGLint majorVersion;
+   EGLint minorVersion;
+
+   EGLBoolean ret;
+
+   /*ret = primus.dfns.eglInitialize(ddisplay, &majorVersion, &minorVersion);
+
+  die_if(!ret,
+  "failed to init EGL in display thread\n");*/
 
   EGLContext context = primus.dfns.eglCreateContext(ddisplay, primus.dconfigs[0], EGL_NO_CONTEXT, contextAttribs );
+  die_if(!context,
+    "failed to acquire rendering context for display thread\n");
+
 //glXCreateNewContext(ddpy, primus.dconfigs[0], GLX_RGBA_TYPE, NULL, True);
   //FIXME
 /*  die_if(!primus.dfns.glXIsDirect(ddpy, context),
@@ -461,27 +611,42 @@ static void* display_work(void *vd)
 /*
   if (!primus.dispmethod)
   primus.dispmethod = test_drawpixels_fast(ddpy, context) ? 2 : 1;*/
-  primus.dispmethod = 2; /* FIXME */
+  primus.dispmethod = 1; /* Force texture */
 
-  EGLSurface windowsurface = primus.dfns.eglCreateWindowSurface(ddisplay, primus.dconfigs[0],
-                                              (EGLNativeWindowType)di.window, NULL);
+  printf("primus display_work 2.0\n");
 
-  primus.dfns.eglMakeCurrent(ddisplay, windowsurface, windowsurface, context);
-//glXMakeCurrent(ddpy, di.window, context);
+  printf("di.windowsurface=%p\n", di.windowsurface);
+
+  ret = primus.dfns.eglMakeCurrent(ddisplay, di.windowsurface, di.windowsurface, context);
+
+  //printf("eglMakeCurrent: %d\n", primus.dfns.eglGetError());
+
+  die_if(!ret, "failed eglMakeCurrent in display\n");
+
   bool use_textures = (primus.dispmethod == 1);
   if (use_textures)
   {
-#if 0
-    primus.dfns.glVertexPointer  (2, GL_FLOAT, 0, quad_vertex_coords);
-    primus.dfns.glTexCoordPointer(2, GL_FLOAT, 0, quad_texture_coords);
-    primus.dfns.glEnableClientState(GL_VERTEX_ARRAY);
-    primus.dfns.glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    primus.dfns.glGenTextures(2, textures);
+      program = init_display_program();
+      iVertex = primus.dfns.glGetAttribLocation(program, "vPosition");
+      iTexture = primus.dfns.glGetAttribLocation(program, "vTexture");
+      iTextureUniform = primus.dfns.glGetUniformLocation(program, "uTexture");
+      printf("iTexture=%d iTU=%d\n", iTexture, iTextureUniform);
+      /* FIXME: Convert to shader */
+      //primus.dfns.glVertexPointer  (2, GL_FLOAT, 0, quad_vertex_coords);
+      //primus.dfns.glTexCoordPointer(2, GL_FLOAT, 0, quad_texture_coords);
+      //primus.dfns.glEnableClientState(GL_VERTEX_ARRAY);
+      //primus.dfns.glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+    primus.dfns.glActiveTexture(GL_TEXTURE0);
     primus.dfns.glEnable(GL_TEXTURE_2D);
-#endif
+    primus.dfns.glGenTextures(2, textures);
   }
-  else
+  else {
+  printf("primus display_work 2.5\n");
     primus.dfns.glGenBuffers(2, pbos);
+  }
+
+  printf("primus display_work 3.0\n");
+
   for (;;)
   {
     sem_wait(&di.d.acqsem);
@@ -506,14 +671,12 @@ static void* display_work(void *vd)
       primus.dfns.glViewport(0, 0, width, height);
       if (use_textures)
       {
-#if 0
 	primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^ 1]);
 	primus.dfns.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex]);
 	primus.dfns.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
-#endif
+	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
       }
       else
       {
@@ -526,7 +689,7 @@ static void* display_work(void *vd)
       continue;
     }
     if (use_textures)
-        ; //primus.dfns.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA, GL_UNSIGNED_BYTE, di.pixeldata);
+        primus.dfns.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, di.pixeldata);
     else
       primus.dfns.glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, width*height*4, di.pixeldata);
     if (!primus.sync)
@@ -534,18 +697,33 @@ static void* display_work(void *vd)
     profiler.tick();
     if (use_textures)
     {
-#if 0
-      primus.dfns.glDrawArrays(GL_QUADS, 0, 4);
-      primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^= 1]);
-#endif
+        glClear(GL_COLOR_BUFFER_BIT);
+
+         // Use the program object
+        primus.dfns.glUseProgram ( program );
+
+        primus.dfns.glViewport(0, 0, width, height);
+
+        // Load the vertex data
+       primus.dfns.glVertexAttribPointer ( iVertex, 3, GL_FLOAT, GL_FALSE, 0, quad_vertex_coords );
+       primus.dfns.glEnableVertexAttribArray ( iVertex );
+
+       primus.dfns.glEnableVertexAttribArray(iTexture);
+       primus.dfns.glVertexAttribPointer(iTexture, 2, GL_FLOAT, GL_FALSE, 0, quad_texture_coords);
+
+       primus.dfns.glUniform1i(iTextureUniform, 0);
+
+       primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^= 1]);
+
+       primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
     }
     else
     {
-        //FIXME: What's the point of that one?
-        //primus.dfns.glDrawPixels(width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+      //FIXME: Can't be done in OpenGL ES, it seems...
+      //primus.dfns.glDrawPixels(width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
       primus.dfns.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[ctex ^= 1]);
     }
-    primus.dfns.eglSwapBuffers(ddisplay, windowsurface);
+    primus.dfns.eglSwapBuffers(ddisplay, di.windowsurface);
     for (int pending = XPending(ddpy); pending > 0; pending--)
     {
       XEvent event;
@@ -562,6 +740,7 @@ static void* display_work(void *vd)
 
 static void* readback_work(void *vd)
 {
+  printf("primus readback_work\n");
   EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE, EGL_NONE };
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
@@ -574,16 +753,44 @@ static void* readback_work(void *vd)
   struct timespec tp;
   if (!primus.sync)
     sem_post(&di.d.relsem); // No PBO is mapped initially
-  EGLContext context = primus.afns.eglCreateContext(primus.adisplay, di.fbconfig, EGL_NO_CONTEXT, contextAttribs);
+
+   EGLint majorVersion;
+   EGLint minorVersion;
+   EGLBoolean ret;
+
+/*   EGLBoolean ret = primus.afns.eglInitialize(primus.adisplay, &majorVersion, &minorVersion);
+  die_if(!ret,
+  "failed to init EGL in readback thread\n");*/
+
+   primus.afns.eglBindAPI(EGL_OPENGL_ES_API);
+
+ printf("di.pbuffer=%p di.config=%p\n", di.pbuffer, di.config);
+ printf("di.maincontext=%p\n", di.maincontext);
+
+  EGLContext context = primus.afns.eglCreateContext(primus.adisplay, di.config, di.maincontext, contextAttribs);
+  die_if(!context,
+    "failed to acquire rendering context for readback thread\n");
 /*  die_if(!primus.afns.glXIsDirect(primus.adpy, context),
     "failed to acquire direct rendering context for readback thread\n");*/
-  primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
+  ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
+  printf("eglMakeCurrent ret=%d\n", primus.afns.glGetError());
+  die_if(!ret, "eglMakeCurrent failed in readback thread\n");
   primus.afns.glGenBuffers(2, &pbos[0]);
   primus.afns.glReadBuffer(GL_FRONT);
+
+  printf("readback_work 2.0\n");
   for (;;)
   {
     sem_wait(&di.r.acqsem);
     profiler.tick(true);
+  back:
+    ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
+    //die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
+    if (!ret) {
+        printf("eglMakeCurrent failed in readback thread loop\n");
+        sleep(1);
+        goto back;
+    }
     if (di.r.reinit)
     {
       clock_gettime(CLOCK_REALTIME, &tp);
@@ -619,11 +826,14 @@ static void* readback_work(void *vd)
       primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
       primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
+    } else {
+        /* FIXME: Bind buffer? */
     }
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
     primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
-    if (!primus.sync)
-      sem_post(&di.r.relsem); // Unblock main thread as soon as possible
+    if (!primus.sync) {
+        //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
+    }
     usleep(sleep_usec);
     profiler.tick();
     if (primus.sync == 1) // Get the previous framebuffer
@@ -636,6 +846,16 @@ static void* readback_work(void *vd)
     profiler.tick();
     clock_gettime(CLOCK_REALTIME, &tp);
     tp.tv_sec  += 1;
+
+    static int x = 0;
+    x++;
+    unsigned int sum = 0; int i;
+    for (i = 0; i < width*height; i++) {
+        sum += ((unsigned int*)pixeldata)[i];
+        ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i/width)*5)%256;
+        ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i%width)*5)%256;
+    }
+
     if (!primus.sync && sem_timedwait(&di.d.relsem, &tp))
       primus_warn("dropping a frame to avoid deadlock\n");
     else
@@ -645,12 +865,17 @@ static void* readback_work(void *vd)
       if (primus.sync)
       {
 	sem_wait(&di.d.relsem);
-	sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
+//	sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
       }
       cbuf ^= 1;
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
     }
     primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+    printf("pixeldatasum=%u\n", sum);
+    printf("Releasing egl context in readback\n");
+    primus.afns.eglMakeCurrent(primus.adisplay, NULL, NULL, NULL);
+    printf("done\n");
+    sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
     profiler.tick();
   }
   return NULL;
@@ -672,15 +897,21 @@ static EGLBoolean match_config(EGLConfig config, EGLConfig* ret)
   };
   for (int i = 0; attrs[i] != EGL_NONE; i += 2)
     primus.dfns.eglGetConfigAttrib(primus.ddisplay, config, attrs[i], &attrs[i+1]);
-  return eglChooseConfig(primus.adisplay, attrs, ret, 1, &ncfg);
+  return primus.afns.eglChooseConfig(primus.adisplay, attrs, ret, 1, &ncfg);
+}
+
+EGLBoolean eglBindAPI( 	EGLenum  api) {
+    return primus.afns.eglBindAPI(api);
 }
 
 EGLContext eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext share_context,
                             EGLint const *attrib_list)
 {
+    printf("primus eglCreateContext\n");
   EGLConfig acfg;
   match_config(config, &acfg);
   EGLContext actx = primus.afns.eglCreateContext(primus.adisplay, acfg, share_context, attrib_list);
+  primus.contexts.record(actx, config, share_context);
   return actx;
 }
 
@@ -695,7 +926,7 @@ EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
   return primus.afns.eglDestroyContext(primus.adisplay, ctx);
 }
 
-static EGLSurface create_pbuffer(DrawableInfo &di)
+static EGLSurface create_pbuffer(EGLDisplay dpy, DrawableInfo &di)
 {
 /* Pixel buffer attributes. */
   EGLint pbattrs[] =
@@ -705,7 +936,9 @@ static EGLSurface create_pbuffer(DrawableInfo &di)
         EGL_NONE
     };
   //int pbattrs[] = {GLX_PBUFFER_WIDTH, di.width, GLX_PBUFFER_HEIGHT, di.height, GLX_PRESERVED_CONTENTS, True, None};
-  return primus.afns.eglCreatePbufferSurface(primus.adisplay, di.fbconfig, pbattrs);
+  EGLSurface surface = primus.afns.eglCreatePbufferSurface(dpy, di.config, pbattrs);
+  printf("create_pbuffer %d %d %p %p\n", di.width, di.height, di.config, surface);
+  return surface;
 }
 
 // Create or recall backing Pbuffer for the drawable
@@ -717,9 +950,11 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
   DrawableInfo &di = primus.drawables[draw];
   if (!known)
   {
-    // Drawable is a plain X Window. Get the FBConfig from the context
-    if (ctx)
-      di.fbconfig = primus.contexts[ctx].fbconfig;
+      printf("!known\n");
+    // Drawable is a plain X Window. Get the Config from the context
+    if (ctx) {
+      di.config = primus.contexts[ctx].config;
+    }
     else
     {
 /* FIXME: Find window from draw? */
@@ -730,16 +965,17 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
       XVisualInfo tmpl = {0}, *vis;
       tmpl.visualid = XVisualIDFromVisual(attrs.visual);
       die_if(!(vis = XGetVisualInfo(dpy, VisualIDMask, &tmpl, &nvis)), "no visuals");
-      di.fbconfig = *match_fbconfig(vis);
+      di.config = *match_config(vis);
       XFree(vis);
 #endif
     }
     di.kind = di.XWindow;
-    di.windowsurface = draw;
+//    di.windowsurface = draw;
     note_geometry(primus.ddpy, di.window, &di.width, &di.height); //FIXME: check dpy
   }
-  else if (ctx && di.fbconfig != primus.contexts[ctx].fbconfig)
+  else if (ctx && di.config != primus.contexts[ctx].config)
   {
+      printf("case 2 %p %p\n", di.config, primus.contexts[ctx].config);
     if (di.pbuffer)
     {
       primus_warn("recreating incompatible pbuffer\n");
@@ -747,30 +983,38 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
       primus.afns.eglDestroySurface(primus.adisplay, di.pbuffer);
       di.pbuffer = 0;
     }
-    di.fbconfig = primus.contexts[ctx].fbconfig;
+    di.config = primus.contexts[ctx].config;
   }
-  if (!di.pbuffer)
-    di.pbuffer = create_pbuffer(di);
+  if (!di.pbuffer) {
+      di.pbuffer = create_pbuffer(dpy, di);
+      di.maincontext = ctx;
+  }
   return di.pbuffer;
 }
 
 EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
 {
+  printf("primus eglMakeCurrent\n");
   EGLSurface pbuffer = lookup_pbuffer(dpy, draw, ctx);
+  printf("pbuffer=%p\n", pbuffer);
   tsdata.make_current(primus.ddpy, draw, draw); //FIXME: check dpy 
   return primus.afns.eglMakeCurrent(primus.adisplay, pbuffer, pbuffer, ctx);
 }
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 {
+  printf("primus eglSwapBuffers\n");
   XFlush(primus.adpy); //FIXME: check dpy
   assert(primus.drawables.known(drawable));
   DrawableInfo &di = primus.drawables[drawable];
-  if (!primus.afns.eglSwapBuffers(primus.adisplay, di.pbuffer))
+  if (!primus.afns.eglSwapBuffers(dpy, di.pbuffer)) {
+    printf("primus swap error.\n");
+    exit(0);
     return 0;
+  }
   if (di.kind == di.Pbuffer || di.kind == di.Pixmap)
     return 1;
-  EGLContext ctx = eglGetCurrentContext();
+  EGLContext ctx = primus.afns.eglGetCurrentContext();
   if (!ctx)
     primus_warn("glXSwapBuffers: no current context\n");
   else if (drawable != tsdata.drawable)
@@ -780,6 +1024,10 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
     primus_warn("glXSwapBuffers: respawning threads after context change\n");
     di.reap_workers();
   }
+  // Readback thread needs a sync object to avoid reading an incomplete frame
+  di.sync = primus.afns.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  EGLBoolean ret = primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
+  printf("eglMakeCurrent release ret=%d\n", ret);
   if (!di.r.worker)
   {
     // Need to create a sharing context to use GL sync objects
@@ -787,16 +1035,21 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
     di.d.spawn_worker(drawable, display_work);
     di.r.spawn_worker(drawable, readback_work);
   }
-  // Readback thread needs a sync object to avoid reading an incomplete frame
-  di.sync = primus.afns.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   sem_post(&di.r.acqsem); // Signal the readback worker thread
   sem_wait(&di.r.relsem); // Wait until it has issued glReadBuffer
+  printf("Making current again\n");
+  printf("%p %p %p %p\n", primus.adisplay, tsdata.drawable, tsdata.read_drawable, ctx);
+  ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, ctx);
+  die_if(!ret, "Failed eglMakeCurrent\n");
+  printf("Delete sync\n");
   primus.afns.glDeleteSync(di.sync);
+  printf("Done");
   if (di.reinit == di.RESIZE)
   {
     __sync_synchronize();
+    printf("Resize\n");
     primus.afns.eglDestroySurface(primus.adisplay, di.pbuffer);
-    di.pbuffer = create_pbuffer(di);
+    di.pbuffer = create_pbuffer(primus.adisplay, di);
     if (ctx) // FIXME: drawable can be current in other threads
       eglMakeCurrent(dpy, tsdata.drawable, tsdata.read_drawable, ctx);
     di.r.reinit = di.reinit;
@@ -805,13 +1058,23 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
   return 1;
 }
 
+/* FIXME: This removes the need for passthru hacks I think */
+EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
+    printf("primus eglGetDisplay\n");
+    primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
+    return primus.adisplay;
+}
+
 EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, NativeWindowType win, EGLint const* attribList) {
-  EGLSurface surface = primus.dfns.eglCreateWindowSurface(dpy, primus.dconfigs[0], win, attribList);
+    printf("primus eglCreateWindowSurface\n");
+  EGLSurface surface = primus.dfns.eglCreateWindowSurface(primus.ddisplay,
+                                                          primus.dconfigs[0], win, attribList);
   DrawableInfo &di = primus.drawables[surface];
   di.kind = di.Window;
-  di.fbconfig = config;
+  di.config = config;
   di.window = win;
   di.windowsurface = surface;
+  printf("di.windowsurface=%p\n", di.windowsurface);
   note_geometry(primus.ddpy, win, &di.width, &di.height);
   return surface;
 }
@@ -835,7 +1098,7 @@ EGLSurface eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig config, const EGLin
   EGLSurface pbuffer = primus.dfns.eglCreatePbufferSurface(dpy, primus.dconfigs[0], attribList);
   DrawableInfo &di = primus.drawables[pbuffer];
   di.kind = di.Pbuffer;
-  di.fbconfig = config;
+  di.config = config;
   for (int i = 0; attribList[i] != None; i++)
     if (attribList[i] == EGL_WIDTH)
       di.width = attribList[i+1];
@@ -850,7 +1113,7 @@ GLXPixmap glXCreatePixmap(Display *dpy, EGLConfig config, Pixmap pixmap, const i
   GLXPixmap glxpix = primus.dfns.glXCreatePixmap(dpy, primus.dconfigs[0], pixmap, attribList);
   DrawableInfo &di = primus.drawables[glxpix];
   di.kind = di.Pixmap;
-  di.fbconfig = config;
+  di.config = config;
   note_geometry(dpy, pixmap, &di.width, &di.height);
   return glxpix;
 }
@@ -868,8 +1131,8 @@ GLXPixmap glXCreateGLXPixmap(Display *dpy, XVisualInfo *visual, Pixmap pixmap)
   DrawableInfo &di = primus.drawables[glxpix];
   di.kind = di.Pixmap;
   note_geometry(dpy, pixmap, &di.width, &di.height);
-  EGLConfig *acfgs = match_fbconfig(visual);
-  di.fbconfig = *acfgs;
+  EGLConfig *acfgs = match_config(visual);
+  di.config = *acfgs;
   return glxpix;
 }
 
@@ -891,9 +1154,9 @@ static XVisualInfo *match_visual(int attrs[])
   return vis;
 }
 
-XVisualInfo *glXGetVisualFromFBConfig(Display *dpy, EGLConfig config)
+XVisualInfo *glXGetVisualFromConfig(Display *dpy, EGLConfig config)
 {
-  if (!primus.afns.glXGetVisualFromFBConfig(primus.adpy, config))
+  if (!primus.afns.glXGetVisualFromConfig(primus.adpy, config))
     return NULL;
   int i, attrs[] = {
     GLX_RGBA, GLX_DOUBLEBUFFER,
@@ -902,7 +1165,7 @@ XVisualInfo *glXGetVisualFromFBConfig(Display *dpy, EGLConfig config)
     GLX_SAMPLE_BUFFERS, 0, GLX_SAMPLES, 0, None
   };
   for (i = 2; attrs[i] != None; i += 2)
-    primus.afns.glXGetFBConfigAttrib(primus.adpy, config, attrs[i], &attrs[i+1]);
+    primus.afns.glXGetConfigAttrib(primus.adpy, config, attrs[i], &attrs[i+1]);
   XVisualInfo *vis = NULL;
   for (i -= 2; i >= 0 && !vis; i -= 2)
   {
@@ -918,7 +1181,7 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute
   EGLBoolean r = primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
 /* FIXME: ?!?!
   if (attribute == GLX_VISUAL_ID && *value)
-  return primus.dfns.glXGetConfig(primus.ddpy, glXGetVisualFromFBConfig(dpy, config), attribute, value);*/
+  return primus.dfns.glXGetConfig(primus.ddpy, glXGetVisualFromConfig(dpy, config), attribute, value);*/
   return r;
 }
 
@@ -971,7 +1234,7 @@ EGLSurface glXGetCurrentReadDrawable(void)
   return tsdata.read_drawable;
 }
 
-// Application sees ddpy-side Visuals, but adpy-side FBConfigs and Contexts
+// Application sees ddpy-side Visuals, but adpy-side Configs and Contexts
 XVisualInfo* glXChooseVisual(Display *dpy, int screen, int *attribList)
 {
   return primus.dfns.glXChooseVisual(dpy, screen, attribList);
@@ -986,7 +1249,8 @@ int glXGetConfig(Display *dpy, XVisualInfo *visual, int attrib, int *value)
 // GLX forwarders that reroute to adpy
 #define DEF_EGL_PROTO(ret, name, par, ...) \
 ret name par \
-{ return primus.afns.name(primus.adpy, __VA_ARGS__); }
+{ printf("Redirecting %s\n", #name);                                  \
+return primus.afns.name(dpy, __VA_ARGS__); }
 #include "egl-dpyredir.def"
 #undef DEF_EGL_PROTO
 
@@ -998,9 +1262,9 @@ asm(".type " #name ", @gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
-    printf("OGL Calling %s\n", #name);                                            \
+    /*printf("OGL Calling %s\n", #name);*/                              \
     void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : (void*)l##name; \
-    printf("Val %p\n", val);                                            \
+        /*printf("Val %p\n", val);   */                                 \
     return val;\
 }
 #include "gles-passthru.def"
@@ -1031,7 +1295,7 @@ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procName)
   };
   enum {n_redefined = sizeof(redefined_fns) / sizeof(redefined_fns[0])};
   // Non-GLX functions are forwarded to the accelerating libGL
-  if (memcmp(procName, "glX", 3))
+  if (memcmp(procName, "egl", 3))
     return primus.afns.eglGetProcAddress(procName);
   // All GLX functions are either implemented in primus or not available
   for (int i = 0; i < n_redefined; i++)
