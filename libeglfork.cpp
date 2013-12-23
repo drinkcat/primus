@@ -405,6 +405,7 @@ static void note_geometry(Display *dpy, Drawable draw, int *width, int *height)
   int x, y;
   unsigned bw, d;
   XGetGeometry(dpy, draw, &root, &x, &y, (unsigned *)width, (unsigned *)height, &bw, &d);
+  printf("Geometry %p %lu %d %d\n", dpy, draw, *width, *height);
 }
 
 #if 0
@@ -560,6 +561,36 @@ printf("po=0\n");
    return programObject;
 }
 
+// If atod is true, match adisplay config to ddisplay config. Otherwise
+// reverse the operation.
+static EGLBoolean match_config(int atod, EGLConfig config, EGLConfig* pconfig)
+{
+  int ncfg;
+  EGLBoolean ret;
+  EGLint attrs[] =
+  {
+       EGL_RED_SIZE,       0,
+       EGL_GREEN_SIZE,     0,
+       EGL_BLUE_SIZE,      0,
+       EGL_ALPHA_SIZE,     0,
+       EGL_DEPTH_SIZE,     0,
+       EGL_STENCIL_SIZE,   0,
+       EGL_SAMPLE_BUFFERS, 0,
+       EGL_NONE
+  };
+  if (atod) {
+      for (int i = 0; attrs[i] != EGL_NONE; i += 2)
+          primus.afns.eglGetConfigAttrib(primus.adisplay, config, attrs[i], &attrs[i+1]);
+      ret = primus.dfns.eglChooseConfig(primus.ddisplay, attrs, pconfig, 1, &ncfg);
+  } else {
+
+      for (int i = 0; attrs[i] != EGL_NONE; i += 2)
+          primus.dfns.eglGetConfigAttrib(primus.ddisplay, config, attrs[i], &attrs[i+1]);
+      ret = primus.afns.eglChooseConfig(primus.adisplay, attrs, pconfig, 1, &ncfg);
+  }
+  die_if(!ret, "Cannot match config\n");
+  return ret;
+}
 
 static void* display_work(void *vd)
 {
@@ -599,7 +630,10 @@ static void* display_work(void *vd)
   die_if(!ret,
   "failed to init EGL in display thread\n");*/
 
-  EGLContext context = primus.dfns.eglCreateContext(ddisplay, primus.dconfigs[0], EGL_NO_CONTEXT, contextAttribs );
+   EGLConfig dcfg;
+   match_config(1, di.config, &dcfg);
+
+  EGLContext context = primus.dfns.eglCreateContext(ddisplay, dcfg, EGL_NO_CONTEXT, contextAttribs );
   die_if(!context,
     "failed to acquire rendering context for display thread\n");
 
@@ -878,25 +912,6 @@ static void* readback_work(void *vd)
   return NULL;
 }
 
-static EGLBoolean match_config(EGLConfig config, EGLConfig* ret)
-{
-  int ncfg;
-  EGLint attrs[] =
-  {
-       EGL_RED_SIZE,       0,
-       EGL_GREEN_SIZE,     0,
-       EGL_BLUE_SIZE,      0,
-       EGL_ALPHA_SIZE,     0,
-       EGL_DEPTH_SIZE,     0,
-       EGL_STENCIL_SIZE,   0,
-       EGL_SAMPLE_BUFFERS, 0,
-       EGL_NONE
-  };
-  for (int i = 0; attrs[i] != EGL_NONE; i += 2)
-    primus.dfns.eglGetConfigAttrib(primus.ddisplay, config, attrs[i], &attrs[i+1]);
-  return primus.afns.eglChooseConfig(primus.adisplay, attrs, ret, 1, &ncfg);
-}
-
 EGLBoolean eglBindAPI( 	EGLenum  api) {
     return primus.afns.eglBindAPI(api);
 }
@@ -906,7 +921,7 @@ EGLContext eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext sha
 {
     printf("primus eglCreateContext\n");
   EGLConfig acfg;
-  match_config(config, &acfg);
+  match_config(0, config, &acfg);
   EGLContext actx = primus.afns.eglCreateContext(primus.adisplay, acfg, share_context, attrib_list);
   primus.contexts.record(actx, config, share_context);
   return actx;
@@ -1065,21 +1080,29 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 /* FIXME: This removes the need for passthru hacks I think */
 EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
     printf("primus eglGetDisplay\n");
+    /* FIXME: Why the hell does that even work?!?!?! */
     primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
+    primus.ddpy = display_id;
+    primus.ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)display_id);
     return primus.adisplay;
 }
 
 EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, NativeWindowType win, EGLint const* attribList) {
+    EGLConfig dcfg;
+    match_config(1, config, &dcfg);
   EGLSurface surface = primus.dfns.eglCreateWindowSurface(primus.ddisplay,
-                                                          primus.dconfigs[0],
+                                                          dcfg,
+                                                          //primus.dconfigs[0],
                                                           win, attribList);
+  printf("surface=%p %p %lu %p\n", surface, dcfg, win, attribList);
   DrawableInfo &di = primus.drawables[surface];
   di.kind = di.Window;
   di.config = config;
   di.window = win;
   di.windowsurface = surface;
-  printf("di.windowsurface=%p\n", di.windowsurface);
+  printf("Noting geometry\n");
   note_geometry(primus.ddpy, win, &di.width, &di.height);
+  printf("returning surface\n");
   return surface;
 }
 
@@ -1182,11 +1205,15 @@ XVisualInfo *glXGetVisualFromConfig(Display *dpy, EGLConfig config)
 
 EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute, EGLint *value)
 {
-  EGLBoolean r = primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
-/* FIXME: ?!?!
-  if (attribute == GLX_VISUAL_ID && *value)
-  return primus.dfns.glXGetConfig(primus.ddpy, glXGetVisualFromConfig(dpy, config), attribute, value);*/
-  return r;
+    printf("eglGetConfigAttrib\n");
+    if (attribute == EGL_NATIVE_VISUAL_ID && *value) {
+        printf("Getting visual ID.\n");
+          EGLConfig dcfg;
+          match_config(1, config, &dcfg);
+      return primus.dfns.eglGetConfigAttrib(primus.ddisplay, dcfg, attribute, value);
+    } else {
+      return primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
+  }
 }
 
 EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface draw, EGLint attribute, EGLint *value)
@@ -1262,7 +1289,7 @@ return primus.afns.name(dpy, __VA_ARGS__); }
 #define DEF_EGL_PROTO(ret, name, par, ...) \
 static ret l##name par \
 { return primus.afns.name(__VA_ARGS__); } \
-asm(".type " #name ", @gnu_indirect_function"); \
+asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
