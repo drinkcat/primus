@@ -315,7 +315,8 @@ static struct PrimusInfo {
     adisplay = afns.eglGetDisplay((EGLNativeDisplayType)adpy);
     ddisplay = dfns.eglGetDisplay((EGLNativeDisplayType)ddpy);
 
-    afns.eglInitialize(adisplay, &majorVersion, &minorVersion);
+    ret = afns.eglInitialize(adisplay, &majorVersion, &minorVersion);
+    die_if(!ret, "broken EGL on accel X display (eglInitialize)\n");
     ret = dfns.eglInitialize(ddisplay, &majorVersion, &minorVersion);
     die_if(!ret, "broken EGL on main X display (eglInitialize)\n");
 
@@ -630,10 +631,10 @@ static void* display_work(void *vd)
   die_if(!ret,
   "failed to init EGL in display thread\n");*/
 
-   EGLConfig dcfg;
-   match_config(1, di.config, &dcfg);
+//   EGLConfig dcfg;
+//1   match_config(1, di.config, &dcfg);
 
-  EGLContext context = primus.dfns.eglCreateContext(ddisplay, dcfg, EGL_NO_CONTEXT, contextAttribs );
+  EGLContext context = primus.dfns.eglCreateContext(ddisplay, primus.dconfigs[0], EGL_NO_CONTEXT, contextAttribs );
   die_if(!context,
     "failed to acquire rendering context for display thread\n");
 
@@ -902,10 +903,10 @@ static void* readback_work(void *vd)
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
     }
     primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-    printf("pixeldatasum=%u\n", sum);
-    printf("Releasing egl context in readback\n");
+    //printf("pixeldatasum=%u\n", sum);
+    //printf("Releasing egl context in readback\n");
     primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
-    printf("done\n");
+    //printf("done\n");
     sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
     profiler.tick();
   }
@@ -920,9 +921,11 @@ EGLContext eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext sha
                             EGLint const *attrib_list)
 {
     printf("primus eglCreateContext\n");
-  EGLConfig acfg;
-  match_config(0, config, &acfg);
-  EGLContext actx = primus.afns.eglCreateContext(primus.adisplay, acfg, share_context, attrib_list);
+    //EGLConfig acfg;
+  //match_config(0, config, &acfg);
+  EGLContext actx = primus.afns.eglCreateContext(primus.adisplay, config, share_context, attrib_list);
+  die_if ( actx == EGL_NO_CONTEXT, "eglCreateContext failed.\n");
+  printf("primus eglCreateContext config=%p config=%p\n", config, config);
   primus.contexts.record(actx, config, share_context);
   return actx;
 }
@@ -1022,7 +1025,7 @@ EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLC
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 {
-    printf("primus eglSwapBuffers %p %p\n", dpy, drawable);
+    //printf("primus eglSwapBuffers %p %p\n", dpy, drawable);
   XFlush(primus.adpy); //FIXME: check dpy
   assert(primus.drawables.known(drawable));
   DrawableInfo &di = primus.drawables[drawable];
@@ -1060,9 +1063,9 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
   //ret = eglMakeCurrent(dpy, tsdata.drawable, tsdata.read_drawable, ctx);
   primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, ctx);
   die_if(!ret, "Failed eglMakeCurrent\n");
-  printf("Delete sync\n");
+  //printf("Delete sync\n");
   primus.afns.glDeleteSync(di.sync);
-  printf("Done");
+  //printf("Done");
   if (di.reinit == di.RESIZE)
   {
     __sync_synchronize();
@@ -1084,6 +1087,36 @@ EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
     //primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
     primus.ddpy = display_id;
     primus.ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)display_id);
+
+   EGLint majorVersion;
+   EGLint minorVersion;
+   EGLint ncfg;
+   EGLBoolean ret;
+    EGLint attrs[] =
+        {
+            EGL_RED_SIZE,       8,
+            EGL_GREEN_SIZE,     8,
+            EGL_BLUE_SIZE,      8,
+            EGL_ALPHA_SIZE,     EGL_DONT_CARE,
+            EGL_DEPTH_SIZE,     EGL_DONT_CARE,
+            EGL_STENCIL_SIZE,   EGL_DONT_CARE,
+            EGL_SAMPLE_BUFFERS, 0,
+            EGL_NONE
+        };
+
+
+    ret = primus.dfns.eglInitialize(primus.ddisplay, &majorVersion, &minorVersion);
+    die_if(!ret, "broken EGL on main X display (eglInitialize)\n");
+
+    /* FIXME: Do we need the list of config? Or just the first one? */
+/*    die_if(!eglGetConfigs(ddpy, NULL, 0, &ncfg),
+      "broken EGL on main X display\n");*/
+    primus.dconfigs = (EGLConfig*)malloc(sizeof(EGLConfig));
+    ret = primus.dfns.eglGetConfigs(primus.ddisplay, NULL, 0, &ncfg);
+    die_if(!ret, "broken EGL on main X display (getconfig)\n");
+    ret = primus.dfns.eglChooseConfig(primus.ddisplay, attrs, primus.dconfigs, 1, &ncfg);
+    die_if(!ret || ncfg == 0, "broken EGL on main X display (chooseconfig)\n");
+
     return primus.adisplay;
 }
 
@@ -1091,8 +1124,8 @@ EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, NativeWindow
     EGLConfig dcfg;
     match_config(1, config, &dcfg);
   EGLSurface surface = primus.dfns.eglCreateWindowSurface(primus.ddisplay,
-                                                          dcfg,
-                                                          //primus.dconfigs[0],
+                                                          //dcfg,
+                                                          primus.dconfigs[0],
                                                           win, attribList);
   printf("surface=%p %p %lu %p\n", surface, dcfg, win, attribList);
   DrawableInfo &di = primus.drawables[surface];
