@@ -45,3 +45,6 @@ DEF_EGL_PROTO(GLvoid*, glMapBufferRange, (GLenum target, GLintptr offset, GLsize
 DEF_EGL_PROTO(GLsync, glFenceSync, (GLenum condition, GLbitfield flags),condition,flags)
 DEF_EGL_PROTO(void, glDeleteSync, (GLsync sync),sync)
 DEF_EGL_PROTO(GLubyte*, glGetString, (GLenum name),name)
+DEF_EGL_PROTO(void, glUniform3fv, (GLint location, GLsizei count, const GLfloat* v),location,count,v)
+DEF_EGL_PROTO(void, glUniform1f, (GLint location, GLfloat x),location,x)
+DEF_EGL_PROTO(void, glBlendFunc, (GLenum sfactor, GLenum dfactor),sfactor,dfactor)
