@@ -630,7 +630,7 @@ static void* display_work(void *vd)
       iVertex = primus.dfns.glGetAttribLocation(program, "vPosition");
       iTexture = primus.dfns.glGetAttribLocation(program, "vTexture");
       iTextureUniform = primus.dfns.glGetUniformLocation(program, "uTexture");
-      printf("iTexture=%d iTU=%d\n", iTexture, iTextureUniform);
+      //printf("iTexture=%d iTU=%d\n", iTexture, iTextureUniform);
       /* FIXME: Convert to shader */
       //primus.dfns.glVertexPointer  (2, GL_FLOAT, 0, quad_vertex_coords);
       //primus.dfns.glTexCoordPointer(2, GL_FLOAT, 0, quad_texture_coords);
@@ -762,7 +762,7 @@ static void* readback_work(void *vd)
   die_if(!ret,
   "failed to init EGL in readback thread\n");*/
 
-   primus.afns.eglBindAPI(EGL_OPENGL_ES_API);
+   //primus.afns.eglBindAPI(EGL_OPENGL_ES_API);
 
  printf("di.pbuffer=%p di.config=%p\n", di.pbuffer, di.config);
  printf("di.maincontext=%p\n", di.maincontext);
@@ -773,26 +773,23 @@ static void* readback_work(void *vd)
 /*  die_if(!primus.afns.glXIsDirect(primus.adpy, context),
     "failed to acquire direct rendering context for readback thread\n");*/
   ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
-  printf("eglMakeCurrent ret=%d\n", primus.afns.glGetError());
+  printf("readback eglMakeCurrent ret=%d\n", ret);
   die_if(!ret, "eglMakeCurrent failed in readback thread\n");
   primus.afns.glGenBuffers(2, &pbos[0]);
   primus.afns.glReadBuffer(GL_FRONT);
+
+  ret = primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
 
   printf("readback_work 2.0\n");
   for (;;)
   {
     sem_wait(&di.r.acqsem);
     profiler.tick(true);
-  back:
     ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
-    //die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
-    if (!ret) {
-        printf("eglMakeCurrent failed in readback thread loop\n");
-        sleep(1);
-        goto back;
-    }
+    die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
     if (di.r.reinit)
     {
+        printf("readback_reinit\n");
       clock_gettime(CLOCK_REALTIME, &tp);
       tp.tv_sec  += 1;
       // Wait for D worker, if active
@@ -821,13 +818,13 @@ static void* readback_work(void *vd)
       di.r.reinit = di.NONE;
       profiler.width = width = di.width;
       profiler.height = height = di.height;
-      primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
+      printf("readback_reinit width=%d height=%d cbuf=%d\n", width, height, cbuf);
+      ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
+      die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
       primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
       primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
-    } else {
-        /* FIXME: Bind buffer? */
     }
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
     primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -852,8 +849,8 @@ static void* readback_work(void *vd)
     unsigned int sum = 0; int i;
     for (i = 0; i < width*height; i++) {
         sum += ((unsigned int*)pixeldata)[i];
-        ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i/width)*5)%256;
-        ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i%width)*5)%256;
+        //    ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i/width)*5)%256;
+        //((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i%width)*5)%256;
     }
 
     if (!primus.sync && sem_timedwait(&di.d.relsem, &tp))
@@ -873,7 +870,7 @@ static void* readback_work(void *vd)
     primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     printf("pixeldatasum=%u\n", sum);
     printf("Releasing egl context in readback\n");
-    primus.afns.eglMakeCurrent(primus.adisplay, NULL, NULL, NULL);
+    primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
     printf("done\n");
     sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
     profiler.tick();
@@ -937,7 +934,13 @@ static EGLSurface create_pbuffer(EGLDisplay dpy, DrawableInfo &di)
     };
   //int pbattrs[] = {GLX_PBUFFER_WIDTH, di.width, GLX_PBUFFER_HEIGHT, di.height, GLX_PRESERVED_CONTENTS, True, None};
   EGLSurface surface = primus.afns.eglCreatePbufferSurface(dpy, di.config, pbattrs);
-  printf("create_pbuffer %d %d %p %p\n", di.width, di.height, di.config, surface);
+  printf("create_pbuffer %p %d %d config=%p %p\n", dpy, di.width, di.height, di.config, surface);
+
+  EGLint val;
+
+  primus.afns.eglQuerySurface(dpy, surface,  EGL_CONFIG_ID, &val);
+  printf("eglQuerySurface=%d\n", val);
+
   return surface;
 }
 
@@ -970,7 +973,6 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
 #endif
     }
     di.kind = di.XWindow;
-//    di.windowsurface = draw;
     note_geometry(primus.ddpy, di.window, &di.width, &di.height); //FIXME: check dpy
   }
   else if (ctx && di.config != primus.contexts[ctx].config)
@@ -994,16 +996,18 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
 
 EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
 {
-  printf("primus eglMakeCurrent\n");
+    printf("primus eglMakeCurrent %p, %p, %p, %p\n", dpy, draw, read, ctx);
   EGLSurface pbuffer = lookup_pbuffer(dpy, draw, ctx);
   printf("pbuffer=%p\n", pbuffer);
-  tsdata.make_current(primus.ddpy, draw, draw); //FIXME: check dpy 
-  return primus.afns.eglMakeCurrent(primus.adisplay, pbuffer, pbuffer, ctx);
+  tsdata.make_current(primus.ddpy, draw, read); //FIXME: check dpy 
+  EGLBoolean ret = primus.afns.eglMakeCurrent(primus.adisplay, pbuffer, pbuffer, ctx);
+  printf("ret=%d\n", ret);
+  return ret;
 }
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 {
-  printf("primus eglSwapBuffers\n");
+    printf("primus eglSwapBuffers %p %p\n", dpy, drawable);
   XFlush(primus.adpy); //FIXME: check dpy
   assert(primus.drawables.known(drawable));
   DrawableInfo &di = primus.drawables[drawable];
@@ -1027,7 +1031,7 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
   // Readback thread needs a sync object to avoid reading an incomplete frame
   di.sync = primus.afns.glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   EGLBoolean ret = primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
-  printf("eglMakeCurrent release ret=%d\n", ret);
+  //printf("swap: eglMakeCurrent release ret=%d\n", ret);
   if (!di.r.worker)
   {
     // Need to create a sharing context to use GL sync objects
@@ -1037,9 +1041,9 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
   }
   sem_post(&di.r.acqsem); // Signal the readback worker thread
   sem_wait(&di.r.relsem); // Wait until it has issued glReadBuffer
-  printf("Making current again\n");
-  printf("%p %p %p %p\n", primus.adisplay, tsdata.drawable, tsdata.read_drawable, ctx);
-  ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, ctx);
+  //printf("eglMakeCurrent %p %p %p %p\n", primus.adisplay, tsdata.drawable, tsdata.read_drawable, ctx);
+  //ret = eglMakeCurrent(dpy, tsdata.drawable, tsdata.read_drawable, ctx);
+  primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, ctx);
   die_if(!ret, "Failed eglMakeCurrent\n");
   printf("Delete sync\n");
   primus.afns.glDeleteSync(di.sync);
@@ -1066,9 +1070,9 @@ EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
 }
 
 EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, NativeWindowType win, EGLint const* attribList) {
-    printf("primus eglCreateWindowSurface\n");
   EGLSurface surface = primus.dfns.eglCreateWindowSurface(primus.ddisplay,
-                                                          primus.dconfigs[0], win, attribList);
+                                                          primus.dconfigs[0],
+                                                          win, attribList);
   DrawableInfo &di = primus.drawables[surface];
   di.kind = di.Window;
   di.config = config;
@@ -1185,12 +1189,12 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute
   return r;
 }
 
-#if 0
-void glXQueryDrawable(Display *dpy, EGLSurface draw, int attribute, unsigned int *value)
+EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface draw, EGLint attribute, EGLint *value)
 {
-  primus.afns.glXQueryDrawable(primus.adpy, lookup_pbuffer(dpy, draw, NULL), attribute, value);
+  return primus.afns.eglQuerySurface(primus.adpy, lookup_pbuffer(dpy, draw, NULL), attribute, value);
 }
 
+#if 0
 void glXUseXFont(Font font, int first, int count, int list)
 {
   unsigned long prop;
