@@ -312,10 +312,10 @@ static struct PrimusInfo {
 
    printf("PRIMUS INIT\n");
 
-   //adisplay = afns.eglGetDisplay((EGLNativeDisplayType)adpy);
+    adisplay = afns.eglGetDisplay((EGLNativeDisplayType)adpy);
     ddisplay = dfns.eglGetDisplay((EGLNativeDisplayType)ddpy);
 
-    //afns.eglInitialize(adisplay, &majorVersion, &minorVersion);
+    afns.eglInitialize(adisplay, &majorVersion, &minorVersion);
     ret = dfns.eglInitialize(ddisplay, &majorVersion, &minorVersion);
     die_if(!ret, "broken EGL on main X display (eglInitialize)\n");
 
@@ -1081,7 +1081,7 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
     printf("primus eglGetDisplay\n");
     /* FIXME: Why the hell does that even work?!?!?! */
-    primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
+    //primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
     primus.ddpy = display_id;
     primus.ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)display_id);
     return primus.adisplay;
