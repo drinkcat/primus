@@ -6,7 +6,7 @@
 
 # Verbosity level
 # 0: only errors, 1: warnings (default), 2: profiling
-export PRIMUS_VERBOSE=${PRIMUS_VERBOSE:-1}
+export PRIMUS_VERBOSE=${PRIMUS_VERBOSE:2}
 
 # Upload/display method
 # 0: autodetect, 1: textures, 2: PBO/glDrawPixels (needs Mesa-10.1+)

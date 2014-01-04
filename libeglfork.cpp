@@ -301,6 +301,9 @@ static struct PrimusInfo {
     die_if(!adpy, "failed to open secondary X display\n");
     die_if(!ddpy, "failed to open main X display\n");
     die_if(!needed_global, "failed to load PRIMUS_LOAD_GLOBAL\n");
+    sync = 0;
+    loglevel = 2;
+    printf("loglevel=%d\n", loglevel);
     //FIXME: int ncfg, attrs[] = {GLX_DOUBLEBUFFER, GL_TRUE, None};
     int ncfg;
     EGLint attrs[] =
@@ -617,7 +620,7 @@ static void* display_work(void *vd)
   GLuint textures[2] = {0};
   GLuint pbos[2] = {0};
   int ctex = 0;
-  static const char *state_names[] = {"wait", "upload", "draw+swap", NULL};
+  static const char *state_names[] = {"wait", "upload", "prepare", "draw", "swap", NULL};
   Profiler profiler("display", state_names);
   //Display *ddpy = XOpenDisplay(NULL);
   Display * ddpy = primus.ddpy;
@@ -674,19 +677,13 @@ static void* display_work(void *vd)
       iVertex = primus.dfns.glGetAttribLocation(program, "vPosition");
       iTexture = primus.dfns.glGetAttribLocation(program, "vTexture");
       iTextureUniform = primus.dfns.glGetUniformLocation(program, "uTexture");
-      //printf("iTexture=%d iTU=%d\n", iTexture, iTextureUniform);
-      /* FIXME: Convert to shader */
-      //primus.dfns.glVertexPointer  (2, GL_FLOAT, 0, quad_vertex_coords);
-      //primus.dfns.glTexCoordPointer(2, GL_FLOAT, 0, quad_texture_coords);
-      //primus.dfns.glEnableClientState(GL_VERTEX_ARRAY);
-      //primus.dfns.glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-    primus.dfns.glActiveTexture(GL_TEXTURE0);
-    primus.dfns.glEnable(GL_TEXTURE_2D);
-    primus.dfns.glGenTextures(2, textures);
+      primus.dfns.glActiveTexture(GL_TEXTURE0);
+      primus.dfns.glEnable(GL_TEXTURE_2D);
+      primus.dfns.glGenTextures(2, textures);
   }
   else {
-  printf("primus display_work 2.5\n");
-    primus.dfns.glGenBuffers(2, pbos);
+      printf("primus display_work 2.5\n");
+      primus.dfns.glGenBuffers(2, pbos);
   }
 
   printf("primus display_work 3.0\n");
@@ -741,25 +738,27 @@ static void* display_work(void *vd)
     profiler.tick();
     if (use_textures)
     {
-        glClear(GL_COLOR_BUFFER_BIT);
+        //primus.dfns.glViewport(0, 0, width, height);
 
-         // Use the program object
+        //primus.dfns.glClear(GL_COLOR_BUFFER_BIT);
+
+        // Use the program object
         primus.dfns.glUseProgram ( program );
 
-        primus.dfns.glViewport(0, 0, width, height);
-
         // Load the vertex data
-       primus.dfns.glVertexAttribPointer ( iVertex, 3, GL_FLOAT, GL_FALSE, 0, quad_vertex_coords );
-       primus.dfns.glEnableVertexAttribArray ( iVertex );
+        primus.dfns.glVertexAttribPointer ( iVertex, 3, GL_FLOAT, GL_FALSE, 0, quad_vertex_coords );
+        primus.dfns.glEnableVertexAttribArray ( iVertex );
 
-       primus.dfns.glEnableVertexAttribArray(iTexture);
-       primus.dfns.glVertexAttribPointer(iTexture, 2, GL_FLOAT, GL_FALSE, 0, quad_texture_coords);
+        primus.dfns.glEnableVertexAttribArray(iTexture);
+        primus.dfns.glVertexAttribPointer(iTexture, 2, GL_FLOAT, GL_FALSE, 0, quad_texture_coords);
 
-       primus.dfns.glUniform1i(iTextureUniform, 0);
+        primus.dfns.glUniform1i(iTextureUniform, 0);
 
-       primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^= 1]);
+        primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^= 1]);
 
-       primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
+        profiler.tick();
+
+        primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
     }
     else
     {
@@ -767,6 +766,7 @@ static void* display_work(void *vd)
       //primus.dfns.glDrawPixels(width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
       primus.dfns.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[ctex ^= 1]);
     }
+    profiler.tick();
     primus.dfns.eglSwapBuffers(ddisplay, di.windowsurface);
     for (int pending = XPending(ddpy); pending > 0; pending--)
     {
