@@ -20,7 +20,7 @@ export PRIMUS_DISPLAY=${PRIMUS_DISPLAY:-:0}
 
 # "Accelerating" libGL
 # $LIB will be interpreted by the dynamic linker
-# export PRIMUS_libGLa=${PRIMUS_libGLa:-'/usr/$LIB/nvidia/libGL.so.1'}
+export PRIMUS_libGLa=${PRIMUS_libGLa:-'/home/nicolas/Downloads/mali/libEGL.so.1:/home/nicolas/Downloads/mali/libGLESv2.so.2'}
 
 # "Displaying" libGL
 # export PRIMUS_libGLd=${PRIMUS_libGLd:-'/usr/$LIB/libGL.so.1'}

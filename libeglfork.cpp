@@ -73,6 +73,15 @@ void *dlsym(const char *symbol)
     return NULL;
 }
 
+/* First try to load the symbol with eglGetProcAddress, then fallback on dlsym */
+void *egldlsym(const char *symbol)
+{
+    void* p = (void*)this->eglGetProcAddress(symbol);
+    if (p)
+	return p;
+    return dlsym(symbol);
+}
+
   // Declare functions as fields of the struct
 #define DEF_EGL_PROTO(ret, name, args, ...) ret (*name) args;
 #include "egl-reimpl.def"
@@ -94,7 +103,7 @@ printf("%s=%p\n", #name, name);                 \
 #include "egl-dpyredir.def"
 #undef DEF_EGL_PROTO
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
-name = (ret (*) args)this->eglGetProcAddress(#name); \
+name = (ret (*) args)egldlsym(#name); \
 printf("B %s=%p\n", #name, name);                 \
   } while (0);
 #include "gles-passthru.def"
@@ -1025,7 +1034,7 @@ EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLC
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 {
-    //printf("primus eglSwapBuffers %p %p\n", dpy, drawable);
+  //printf("primus eglSwapBuffers %p %p\n", dpy, drawable);
   XFlush(primus.adpy); //FIXME: check dpy
   assert(primus.drawables.known(drawable));
   DrawableInfo &di = primus.drawables[drawable];
@@ -1425,7 +1434,7 @@ void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
     printf("non-strict Calling %s\n", #name);                                            \
-    void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : NULL; \
+    void* val = primus.dfns.handle_valid() ? primus.dfns.dlsym(#name) : NULL; \
     printf("Val %p\n", val);                                            \
     return val;\
 }
