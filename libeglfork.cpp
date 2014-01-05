@@ -543,7 +543,8 @@ XImage* imgnative = NULL;
       continue;
     }
 
-#if 1 // RGB 24-bit to 32-bit
+    /* FIXME: Data needs to be flipped... */
+#if 0 // RGB 24-bit to 32-bit
         int i,j;
         int instride = (width*3+3)/4;
         int wblock = width/4;
@@ -577,17 +578,14 @@ XImage* imgnative = NULL;
             }
         }
 #endif
-#if 0 // RGBA 32-bit to 32-bit
-        int i,j;
-        int scanline = width*4;
-        int total = width*height*4;
-        for (j = 0; j < total; j += scanline) {
-            for (i = 0; i < scanline; i += 4) {
-                // Swap R and B
-                uint32_t val = *(uint32_t*)((uint8_t*)di.pixeldata+i+j);
-                val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
-                *(uint32_t*)(imgbuffer+i+(total-scanline-j)) = val;
-            }
+#if 1 // RGBA 32-bit to 32-bit
+        int i;
+        int total = width*height;
+        uint32_t* in = (uint32_t*)di.pixeldata;
+        uint32_t* out = (uint32_t*)imgbuffer;
+        for (i = 0; i < total; i++) {
+            uint32_t val = *in++;
+            *out++ = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
         }
 #endif
 
@@ -714,8 +712,9 @@ static void* readback_work(void *vd)
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
     //primus.afns.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, NULL);
 
-    /* RGBA is painfully slow on MALI (done in CPU?) */
-    primus.afns.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    /* RGBA is painfully slow on MALI (done in CPU?), if the configuration does not
+     * have an alpha channel */
+    primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
     if (!primus.sync) {
         //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
