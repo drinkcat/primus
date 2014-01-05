@@ -714,10 +714,10 @@ static void* display_work(void *vd)
       {
 	primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^ 1]);
 	primus.dfns.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
 	primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex]);
 	primus.dfns.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
       }
       else
       {
@@ -730,7 +730,7 @@ static void* display_work(void *vd)
       continue;
     }
     if (use_textures)
-        primus.dfns.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, di.pixeldata);
+        primus.dfns.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, di.pixeldata);
     else
       primus.dfns.glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, width*height*4, di.pixeldata);
     if (!primus.sync)
@@ -757,7 +757,7 @@ static void* display_work(void *vd)
 
         profiler.tick();
 
-//        primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
+        primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
     }
     else
     {
@@ -871,7 +871,7 @@ static void* readback_work(void *vd)
       primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_DYNAMIC_DRAW);
     }
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
-    primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    primus.afns.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, NULL);
     if (!primus.sync) {
         //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
