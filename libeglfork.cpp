@@ -301,6 +301,7 @@ static struct PrimusInfo {
     die_if(!adpy, "failed to open secondary X display\n");
     die_if(!ddpy, "failed to open main X display\n");
     die_if(!needed_global, "failed to load PRIMUS_LOAD_GLOBAL\n");
+    XInitThreads();
     sync = 0;
     loglevel = 2;
     printf("loglevel=%d\n", loglevel);
@@ -453,127 +454,6 @@ static bool test_drawpixels_fast(Display *dpy, EGLContext ctx)
 }
 #endif
 
-//GLuint init_display_program()
-//GLuint load_shader( GLenum type, const char *shaderSrc );
-
-///
-// Create a shader object, load the shader source, and
-// compile the shader.
-//
-static GLuint load_shader( GLenum type, const char *shaderSrc )
-{
-   GLuint shader;
-   GLint compiled;
-
-   // Create the shader object
-   shader = primus.dfns.glCreateShader ( type );
-
-   // Load the shader source
-   primus.dfns.glShaderSource ( shader, 1, &shaderSrc, NULL );
-   
-   // Compile the shader
-   primus.dfns.glCompileShader ( shader );
-
-   // Check the compile status
-   primus.dfns.glGetShaderiv ( shader, GL_COMPILE_STATUS, &compiled );
-
-   if ( !compiled ) 
-   {
-      GLint infoLen = 0;
-
-      primus.dfns.glGetShaderiv ( shader, GL_INFO_LOG_LENGTH, &infoLen );
-      
-      if ( infoLen > 1 )
-      {
-          char* infoLog = (char*)malloc (sizeof(char) * infoLen );
-
-         primus.dfns.glGetShaderInfoLog ( shader, infoLen, NULL, infoLog );
-         printf ( "Error compiling shader:\n%s\n", infoLog );
-         
-         free ( infoLog );
-      }
-
-      primus.dfns.glDeleteShader ( shader );
-      return 0;
-   }
-
-   return shader;
-}
-
-static GLuint init_display_program()
-{
-   const char* vShaderStr =  
-      "attribute vec4 vPosition;    \n"
-      "attribute vec2 vTexture;    \n"
-      "varying vec2 vTexCoord;\n"
-      "void main()                  \n"
-      "{                            \n"
-      "   gl_Position = vPosition;  \n"
-      "   vTexCoord = vTexture;  \n"
-      "}                            \n";
-   
-   const char* fShaderStr =  
-      "precision mediump float;\n"
-      "uniform sampler2D uTexture;\n"
-      "varying vec2 vTexCoord;\n"
-      "void main()                                  \n"
-      "{                                            \n"
-      "  gl_FragColor = texture2D(uTexture, vTexCoord);\n"
-      "}                                            \n";
-
-   GLuint vertexShader;
-   GLuint fragmentShader;
-   GLuint programObject;
-   GLint linked;
-
-   // Load the vertex/fragment shaders
-   vertexShader = load_shader ( GL_VERTEX_SHADER, vShaderStr );
-   fragmentShader = load_shader ( GL_FRAGMENT_SHADER, fShaderStr );
-
-   // Create the program object
-   programObject = primus.dfns.glCreateProgram ( );
-   
-if ( programObject == 0 ) {
-printf("po=0\n");
-      return 0;
-}
-
-   primus.dfns.glAttachShader ( programObject, vertexShader );
-   primus.dfns.glAttachShader ( programObject, fragmentShader );
-
-   // Bind vPosition to attribute 0   
-   primus.dfns.glBindAttribLocation ( programObject, 0, "vPosition" );
-
-   // Link the program
-   primus.dfns.glLinkProgram ( programObject );
-
-   // Check the link status
-   primus.dfns.glGetProgramiv ( programObject, GL_LINK_STATUS, &linked );
-
-   if ( !linked ) 
-   {
-      GLint infoLen = 0;
-
-      primus.dfns.glGetProgramiv ( programObject, GL_INFO_LOG_LENGTH, &infoLen );
-      
-      if ( infoLen > 1 )
-      {
-          char* infoLog = (char*)malloc (sizeof(char) * infoLen );
-
-         primus.dfns.glGetProgramInfoLog ( programObject, infoLen, NULL, infoLog );
-         printf ( "Error linking program:\n%s\n", infoLog );            
-         
-         free ( infoLog );
-      }
-
-      primus.dfns.glDeleteProgram ( programObject );
-      return 0;
-   }
-
-   primus.dfns.glClearColor ( 0.0f, 0.0f, 0.0f, 0.0f );
-   return programObject;
-}
-
 // If atod is true, match adisplay config to ddisplay config. Otherwise
 // reverse the operation.
 static EGLBoolean match_config(int atod, EGLConfig config, EGLConfig* pconfig)
@@ -605,6 +485,9 @@ static EGLBoolean match_config(int atod, EGLConfig config, EGLConfig* pconfig)
   return ret;
 }
 
+#include <xcb/xcb.h>
+#include <xcb/xcb_image.h>
+
 static void* display_work(void *vd)
 {
   printf("primus display_work\n");
@@ -620,7 +503,7 @@ static void* display_work(void *vd)
   GLuint textures[2] = {0};
   GLuint pbos[2] = {0};
   int ctex = 0;
-  static const char *state_names[] = {"wait", "upload", "prepare", "draw", "swap", NULL};
+  static const char *state_names[] = {"wait", "upload", "draw", "swap", NULL};
   Profiler profiler("display", state_names);
   //Display *ddpy = XOpenDisplay(NULL);
   Display * ddpy = primus.ddpy;
@@ -628,65 +511,11 @@ static void* display_work(void *vd)
   XSelectInput(ddpy, di.window, StructureNotifyMask);
   note_geometry(ddpy, di.window, &width, &height);
   di.update_geometry(width, height);
-  EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE, EGL_NONE };  
 
-  //EGLDisplay ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)ddpy);
-  EGLDisplay ddisplay = primus.ddisplay;
+    GC gc = XCreateGC(ddpy, di.window, 0, NULL);
 
-   EGLint majorVersion;
-   EGLint minorVersion;
-
-   EGLBoolean ret;
-
-   /*ret = primus.dfns.eglInitialize(ddisplay, &majorVersion, &minorVersion);
-
-  die_if(!ret,
-  "failed to init EGL in display thread\n");*/
-
-//   EGLConfig dcfg;
-//1   match_config(1, di.config, &dcfg);
-
-  EGLContext context = primus.dfns.eglCreateContext(ddisplay, primus.dconfigs[0], EGL_NO_CONTEXT, contextAttribs );
-  die_if(!context,
-    "failed to acquire rendering context for display thread\n");
-
-//glXCreateNewContext(ddpy, primus.dconfigs[0], GLX_RGBA_TYPE, NULL, True);
-  //FIXME
-/*  die_if(!primus.dfns.glXIsDirect(ddpy, context),
-    "failed to acquire direct rendering context for display thread\n");*/
-
-/*
-  if (!primus.dispmethod)
-  primus.dispmethod = test_drawpixels_fast(ddpy, context) ? 2 : 1;*/
-  primus.dispmethod = 1; /* Force texture */
-
-  printf("primus display_work 2.0\n");
-
-  printf("di.windowsurface=%p\n", di.windowsurface);
-
-  ret = primus.dfns.eglMakeCurrent(ddisplay, di.windowsurface, di.windowsurface, context);
-
-  //printf("eglMakeCurrent: %d\n", primus.dfns.eglGetError());
-
-  die_if(!ret, "failed eglMakeCurrent in display\n");
-
-  bool use_textures = (primus.dispmethod == 1);
-  if (use_textures)
-  {
-      program = init_display_program();
-      iVertex = primus.dfns.glGetAttribLocation(program, "vPosition");
-      iTexture = primus.dfns.glGetAttribLocation(program, "vTexture");
-      iTextureUniform = primus.dfns.glGetUniformLocation(program, "uTexture");
-      primus.dfns.glActiveTexture(GL_TEXTURE0);
-      primus.dfns.glEnable(GL_TEXTURE_2D);
-      primus.dfns.glGenTextures(2, textures);
-  }
-  else {
-      printf("primus display_work 2.5\n");
-      primus.dfns.glGenBuffers(2, pbos);
-  }
-
-  printf("primus display_work 3.0\n");
+char* imgbuffer = NULL;
+XImage* imgnative = NULL;
 
   for (;;)
   {
@@ -694,14 +523,11 @@ static void* display_work(void *vd)
     profiler.tick(true);
     if (di.d.reinit)
     {
+//free(imgbuffer);
+      if (imgnative)
+          XDestroyImage(imgnative);
       if (di.d.reinit == di.SHUTDOWN)
       {
-	if (use_textures)
-            ;  //primus.dfns.glDeleteTextures(2, textures);
-	else
-	  primus.dfns.glDeleteBuffers(2, pbos);
-	primus.dfns.eglMakeCurrent(ddisplay, 0, 0, NULL);
-	primus.dfns.eglDestroyContext(ddisplay, context);
 	XCloseDisplay(ddpy);
 	sem_post(&di.d.relsem);
 	return NULL;
@@ -709,64 +535,70 @@ static void* display_work(void *vd)
       di.d.reinit = di.NONE;
       profiler.width = width = di.width;
       profiler.height = height = di.height;
-      primus.dfns.glViewport(0, 0, width, height);
-      if (use_textures)
-      {
-	primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^ 1]);
-	primus.dfns.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-	primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex]);
-	primus.dfns.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	primus.dfns.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-      }
-      else
-      {
-	primus.dfns.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[ctex ^ 1]);
-	primus.dfns.glBufferData(GL_PIXEL_UNPACK_BUFFER, width*height*4, NULL, GL_STREAM_DRAW);
-	primus.dfns.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[ctex]);
-	primus.dfns.glBufferData(GL_PIXEL_UNPACK_BUFFER, width*height*4, NULL, GL_STREAM_DRAW);
-      }
+      imgbuffer = (char*)malloc(width*height*4);
+      imgnative = XCreateImage(ddpy, CopyFromParent, 24, ZPixmap, 0,
+                                     imgbuffer, width, height, 32, 0);
+      printf("imgbuffer=%p\n", imgbuffer);
       sem_post(&di.d.relsem);
       continue;
     }
-    if (use_textures)
-        primus.dfns.glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, di.pixeldata);
-    else
-      primus.dfns.glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, width*height*4, di.pixeldata);
+
+#if 1 // RGB 24-bit to 32-bit
+        int i,j;
+        int instride = (width*3+3)/4;
+        int wblock = width/4;
+        int wreminder = width%4;
+        uint32_t* in = (uint32_t*)di.pixeldata;
+        uint32_t* out = (uint32_t*)imgbuffer;
+        for (j = 0; j < height; j++) {
+            uint32_t i0, i1, i2;
+            for (i = 0; i < wblock; i++) {
+                i0 = in[0];
+                i1 = in[1];
+                i2 = in[2];
+                out[0] = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
+                out[1] = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
+                out[2] = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
+                out[3] = (i2 & 0x0000ff00) << 8  | (i2 & 0x00ff0000) >> 8  | (i2 & 0xff000000) >> 24;
+                in += 3;
+                out += 4;
+            }
+            if (wreminder > 0) {
+                i0 = *in++;
+                *out++ = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
+                if (wreminder > 1) {
+                    i1 = *in++;
+                    *out++ = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
+                    if (wreminder > 2) {
+                        i2 = *in++;
+                        *out++ = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
+                    }
+                }
+            }
+        }
+#endif
+#if 0 // RGBA 32-bit to 32-bit
+        int i,j;
+        int scanline = width*4;
+        int total = width*height*4;
+        for (j = 0; j < total; j += scanline) {
+            for (i = 0; i < scanline; i += 4) {
+                // Swap R and B
+                uint32_t val = *(uint32_t*)((uint8_t*)di.pixeldata+i+j);
+                val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
+                *(uint32_t*)(imgbuffer+i+(total-scanline-j)) = val;
+            }
+        }
+#endif
+
     if (!primus.sync)
       sem_post(&di.d.relsem); // Unlock as soon as possible
     profiler.tick();
-    if (use_textures)
-    {
-        //primus.dfns.glViewport(0, 0, width, height);
+        XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
+        XFlush(ddpy);
+/* flush the request */
 
-        //primus.dfns.glClear(GL_COLOR_BUFFER_BIT);
-
-        // Use the program object
-        primus.dfns.glUseProgram ( program );
-
-        // Load the vertex data
-        primus.dfns.glVertexAttribPointer( iVertex, 3, GL_FLOAT, GL_FALSE, 0, quad_vertex_coords );
-        primus.dfns.glVertexAttribPointer(iTexture, 2, GL_FLOAT, GL_FALSE, 0, quad_texture_coords);
-        primus.dfns.glEnableVertexAttribArray ( iVertex );
-        primus.dfns.glEnableVertexAttribArray(iTexture);
-
-        primus.dfns.glUniform1i(iTextureUniform, 0);
-
-        primus.dfns.glBindTexture(GL_TEXTURE_2D, textures[ctex ^= 1]);
-
-        profiler.tick();
-
-        primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
-    }
-    else
-    {
-      //FIXME: Can't be done in OpenGL ES, it seems...
-      //primus.dfns.glDrawPixels(width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
-      primus.dfns.glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbos[ctex ^= 1]);
-    }
     profiler.tick();
-    primus.dfns.eglSwapBuffers(ddisplay, di.windowsurface);
     for (int pending = XPending(ddpy); pending > 0; pending--)
     {
       XEvent event;
@@ -870,7 +702,19 @@ static void* readback_work(void *vd)
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
       primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_DYNAMIC_DRAW);
     }
+
+    GLint ext_format, ext_type;
+    glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &ext_format);
+    glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &ext_type);
+/*    printf("FORMAT/TYPE: %x %x\n", ext_format, ext_type);
+    printf("FORMAT/TYPE: GL_RGB=%x GL_RGBA=%x\n", GL_RGB, GL_RGBA);
+    printf("FORMAT/TYPE: GL_UNSIGNED_BYTE=%x\n", GL_UNSIGNED_BYTE);*/
+    /* FIXME: Detect if RGB or RGBA need to be used */
+
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
+    //primus.afns.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+
+    /* RGBA is painfully slow on MALI (done in CPU?) */
     primus.afns.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, NULL);
     if (!primus.sync) {
         //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
@@ -899,6 +743,7 @@ static void* readback_work(void *vd)
         //    ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i/width)*5)%256;
         //((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i%width)*5)%256;
     }
+    printf("sum=%x\n", sum);
 #endif
 
     if (!primus.sync && sem_timedwait(&di.d.relsem, &tp))
