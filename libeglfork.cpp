@@ -746,11 +746,10 @@ static void* display_work(void *vd)
         primus.dfns.glUseProgram ( program );
 
         // Load the vertex data
-        primus.dfns.glVertexAttribPointer ( iVertex, 3, GL_FLOAT, GL_FALSE, 0, quad_vertex_coords );
-        primus.dfns.glEnableVertexAttribArray ( iVertex );
-
-        primus.dfns.glEnableVertexAttribArray(iTexture);
+        primus.dfns.glVertexAttribPointer( iVertex, 3, GL_FLOAT, GL_FALSE, 0, quad_vertex_coords );
         primus.dfns.glVertexAttribPointer(iTexture, 2, GL_FLOAT, GL_FALSE, 0, quad_texture_coords);
+        primus.dfns.glEnableVertexAttribArray ( iVertex );
+        primus.dfns.glEnableVertexAttribArray(iTexture);
 
         primus.dfns.glUniform1i(iTextureUniform, 0);
 
@@ -758,7 +757,7 @@ static void* display_work(void *vd)
 
         profiler.tick();
 
-        primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
+//        primus.dfns.glDrawArrays ( GL_TRIANGLES, 0, 6 );
     }
     else
     {
@@ -828,7 +827,8 @@ static void* readback_work(void *vd)
   for (;;)
   {
     sem_wait(&di.r.acqsem);
-    profiler.tick(true);
+    profiler.tick(true); 
+    /* sleep */
     ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
     die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
     if (di.r.reinit)
@@ -866,9 +866,9 @@ static void* readback_work(void *vd)
       ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
       die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
-      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
+      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_DYNAMIC_DRAW);
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
-      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_STREAM_READ);
+      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_DYNAMIC_DRAW);
     }
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
     primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
@@ -877,17 +877,20 @@ static void* readback_work(void *vd)
     }
     usleep(sleep_usec);
     profiler.tick();
+    /* map */
     if (primus.sync == 1) // Get the previous framebuffer
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
     double map_time = Profiler::get_timestamp();
     GLvoid *pixeldata = primus.afns.glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0,
-                                                     width*height*4, GL_MAP_READ_BIT);
+                                                     width*height*4, GL_MAP_READ_BIT); // | GL_MAP_UNSYNCHRONIZED_BIT);
     map_time = Profiler::get_timestamp() - map_time;
     sleep_usec = (map_time * 1e6 + sleep_usec) * primus.autosleep / 100;
     profiler.tick();
+    /* wait */
     clock_gettime(CLOCK_REALTIME, &tp);
     tp.tv_sec  += 1;
 
+#if 0
     static int x = 0;
     x++;
     unsigned int sum = 0; int i;
@@ -896,6 +899,7 @@ static void* readback_work(void *vd)
         //    ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i/width)*5)%256;
         //((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i%width)*5)%256;
     }
+#endif
 
     if (!primus.sync && sem_timedwait(&di.d.relsem, &tp))
       primus_warn("dropping a frame to avoid deadlock\n");
@@ -906,7 +910,7 @@ static void* readback_work(void *vd)
       if (primus.sync)
       {
 	sem_wait(&di.d.relsem);
-//	sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
+	//sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
       }
       cbuf ^= 1;
       primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
