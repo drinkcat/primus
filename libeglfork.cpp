@@ -579,19 +579,25 @@ XImage* imgnative = NULL;
         }
 #endif
 #if 1 // RGBA 32-bit to 32-bit
-        int i;
-        int total = width*height;
+        int i,j;
         uint32_t* in = (uint32_t*)di.pixeldata;
         uint32_t* out = (uint32_t*)imgbuffer;
-        for (i = 0; i < total; i++) {
-            uint32_t val = *in++;
-            *out++ = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
+        out += width*(height-1);
+        for (j = 0; j < height; j++) {
+            for (i = 0; i < width; i ++) {
+                // Swap R and B
+                int val = *(in++);
+                val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
+                *(out++) = val;
+            }
+            out -= 2*width;
         }
 #endif
 
     if (!primus.sync)
       sem_post(&di.d.relsem); // Unlock as soon as possible
     profiler.tick();
+
         XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
         XFlush(ddpy);
 /* flush the request */
@@ -618,8 +624,8 @@ static void* readback_work(void *vd)
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
   int width, height;
-  GLuint pbos[2] = {0};
   int cbuf = 0;
+  void* buffers[2] = {NULL, NULL};
   unsigned sleep_usec = 0;
   static const char *state_names[] = {"app", "sleep", "map", "wait", NULL};
   Profiler profiler("readback", state_names);
@@ -648,7 +654,6 @@ static void* readback_work(void *vd)
   ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
   printf("readback eglMakeCurrent ret=%d\n", ret);
   die_if(!ret, "eglMakeCurrent failed in readback thread\n");
-  primus.afns.glGenBuffers(2, &pbos[0]);
   primus.afns.glReadBuffer(GL_FRONT);
 
   ret = primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
@@ -664,6 +669,8 @@ static void* readback_work(void *vd)
     if (di.r.reinit)
     {
         printf("readback_reinit\n");
+        free(buffers[0]);
+        free(buffers[1]);
       clock_gettime(CLOCK_REALTIME, &tp);
       tp.tv_sec  += 1;
       // Wait for D worker, if active
@@ -681,9 +688,6 @@ static void* readback_work(void *vd)
 	sem_post(&di.d.relsem); // Unlock as no PBO is currently mapped
       if (di.r.reinit == di.SHUTDOWN)
       {
-	primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
-	primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
-	primus.afns.glDeleteBuffers(2, &pbos[0]);
 	primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
 	primus.afns.eglDestroyContext(primus.adisplay, context);
 	sem_post(&di.r.relsem);
@@ -695,10 +699,8 @@ static void* readback_work(void *vd)
       printf("readback_reinit width=%d height=%d cbuf=%d\n", width, height, cbuf);
       ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
       die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
-      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_DYNAMIC_DRAW);
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
-      primus.afns.glBufferData(GL_PIXEL_PACK_BUFFER, width*height*4, NULL, GL_DYNAMIC_DRAW);
+      buffers[0] = malloc(4*width*height);
+      buffers[1] = malloc(4*width*height);
     }
 
     GLint ext_format, ext_type;
@@ -710,11 +712,10 @@ static void* readback_work(void *vd)
     /* FIXME: Detect if RGB or RGBA need to be used */
 
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
-    //primus.afns.glReadPixels(0, 0, width, height, GL_RGB, GL_UNSIGNED_BYTE, NULL);
 
     /* RGBA is painfully slow on MALI (done in CPU?), if the configuration does not
      * have an alpha channel */
-    primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffers[cbuf]);
     if (!primus.sync) {
         //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
@@ -722,10 +723,11 @@ static void* readback_work(void *vd)
     profiler.tick();
     /* map */
     if (primus.sync == 1) // Get the previous framebuffer
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf ^ 1]);
+        di.pixeldata = buffers[cbuf];
+    else
+        di.pixeldata = buffers[cbuf^1];
     double map_time = Profiler::get_timestamp();
-    GLvoid *pixeldata = primus.afns.glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0,
-                                                     width*height*4, GL_MAP_READ_BIT); // | GL_MAP_UNSYNCHRONIZED_BIT);
+    //printf("pixeldata=%p\n", pixeldata);
     map_time = Profiler::get_timestamp() - map_time;
     sleep_usec = (map_time * 1e6 + sleep_usec) * primus.autosleep / 100;
     profiler.tick();
@@ -733,23 +735,10 @@ static void* readback_work(void *vd)
     clock_gettime(CLOCK_REALTIME, &tp);
     tp.tv_sec  += 1;
 
-#if 0
-    static int x = 0;
-    x++;
-    unsigned int sum = 0; int i;
-    for (i = 0; i < width*height; i++) {
-        sum += ((unsigned int*)pixeldata)[i];
-        //    ((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i/width)*5)%256;
-        //((unsigned int*)pixeldata)[i] = 0x00000000 + (x << 8) + ((i%width)*5)%256;
-    }
-    printf("sum=%x\n", sum);
-#endif
-
     if (!primus.sync && sem_timedwait(&di.d.relsem, &tp))
       primus_warn("dropping a frame to avoid deadlock\n");
     else
     {
-      di.pixeldata = pixeldata;
       sem_post(&di.d.acqsem);
       if (primus.sync)
       {
@@ -757,9 +746,7 @@ static void* readback_work(void *vd)
 	//sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
       }
       cbuf ^= 1;
-      primus.afns.glBindBuffer(GL_PIXEL_PACK_BUFFER, pbos[cbuf]);
     }
-    primus.afns.glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
     //printf("pixeldatasum=%u\n", sum);
     //printf("Releasing egl context in readback\n");
     primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
