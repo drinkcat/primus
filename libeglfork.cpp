@@ -12,7 +12,10 @@
 #include <cassert>
 #include <map>
 #include <string>
-#include <X11/Xatom.h>
+#include <X11/Xlib.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
+#include <X11/extensions/XShm.h>
 #pragma GCC visibility push(default)
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -425,6 +428,10 @@ static void* display_work(void *vd)
 
   char* imgbuffer = NULL;
   XImage* imgnative = NULL;
+  XShmSegmentInfo shminfo;
+
+  /* TODO: Fallback if MIT-SHM not available */
+  die_if(!XShmQueryExtension(ddpy), "MIT-SHM extension not available.");
 
   for (;;)
   {
@@ -443,10 +450,17 @@ static void* display_work(void *vd)
       di.d.reinit = di.NONE;
       profiler.width = width = di.width;
       profiler.height = height = di.height;
-      imgbuffer = (char*)malloc(width*height*4);
-      imgnative = XCreateImage(ddpy, CopyFromParent, 24, ZPixmap, 0,
-                                     imgbuffer, width, height, 32, 0);
-      printf("imgbuffer=%p\n", imgbuffer);
+//      imgbuffer = (char*)malloc(width*height*4);
+//      imgnative = XCreateImage(ddpy, CopyFromParent, 24, ZPixmap, 0,
+//                                     imgbuffer, width, height, 32, 0);
+      imgnative = XShmCreateImage(ddpy, CopyFromParent, 24, ZPixmap,
+                                  imgbuffer, &shminfo, width, height);
+      printf("imgnative=%p\n", imgnative);
+      shminfo.shmid = shmget(IPC_PRIVATE, 4*width*height, IPC_CREAT|0777);
+      imgbuffer = imgnative->data = shminfo.shmaddr = (char*)shmat(shminfo.shmid, 0, 0);
+      shminfo.readOnly = True;
+      die_if(!XShmAttach(ddpy, &shminfo), "SHM attach error");
+
       sem_post(&di.d.relsem);
       continue;
     }
@@ -468,7 +482,9 @@ static void* display_work(void *vd)
       sem_post(&di.d.relsem); // Unlock as soon as possible
     profiler.tick();
 
-    XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
+    //XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
+    /* FIXME: SendEvent? */
+    XShmPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height, False);
 
     profiler.tick();
     /* Listening to events does not work (we compete against the application!):
@@ -560,22 +576,22 @@ static void* readback_work(void *vd)
       die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
       buffers[0] = malloc(4*width*height);
       buffers[1] = malloc(4*width*height);
+
+      GLint ext_format, ext_type;
+      glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &ext_format);
+      glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &ext_type);
+      printf("FORMAT/TYPE: %x %x\n", ext_format, ext_type);
+      printf("FORMAT/TYPE: GL_RGB=%x GL_RGBA=%x\n", GL_RGB, GL_RGBA);
+      printf("FORMAT/TYPE: GL_UNSIGNED_BYTE=%x\n", GL_UNSIGNED_BYTE);
+
+      di.pixelformat = ext_format;
+      di.pixeltype = ext_type;
     }
 
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
 
     profiler.tick();
     /* readpix */
-    GLint ext_format, ext_type;
-    glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &ext_format);
-    glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &ext_type);
-    //printf("FORMAT/TYPE: %x %x\n", ext_format, ext_type);
-    //printf("FORMAT/TYPE: GL_RGB=%x GL_RGBA=%x\n", GL_RGB, GL_RGBA);
-    //printf("FORMAT/TYPE: GL_UNSIGNED_BYTE=%x\n", GL_UNSIGNED_BYTE);
-
-    di.pixelformat = ext_format;
-    di.pixeltype = ext_type;
-
     primus.afns.glReadPixels(0, 0, width, height, di.pixelformat, di.pixeltype, buffers[cbuf]);
     GLenum error = glGetError();
     die_if(error, "glReadPixels error: %x\n", error);
