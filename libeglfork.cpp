@@ -506,14 +506,12 @@ static void* readback_work(void *vd)
   EGLContext context = primus.afns.eglCreateContext(primus.adisplay, di.config, di.maincontext, contextAttribs);
   die_if(!context,
          "failed to acquire rendering context for readback thread\n");
-/*  die_if(!primus.afns.glXIsDirect(primus.adpy, context),
-    "failed to acquire direct rendering context for readback thread\n");*/
   ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
   printf("readback eglMakeCurrent ret=%d\n", ret);
   die_if(!ret, "eglMakeCurrent failed in readback thread\n");
 
   /* FIXME: Does that make any sense? */
-  primus.afns.glReadBuffer(GL_FRONT);
+  //primus.afns.glReadBuffer(GL_FRONT);
 
   ret = primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
 
@@ -582,7 +580,8 @@ static void* readback_work(void *vd)
     GLenum error = glGetError();
     die_if(error, "glReadPixels error: %x\n", error);
     if (!primus.sync) {
-      //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
+      primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
+      sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
     if (primus.sync == 1) // Get the previous framebuffer
       di.pixeldata = buffers[cbuf];
@@ -601,15 +600,11 @@ static void* readback_work(void *vd)
       if (primus.sync)
       {
 	sem_wait(&di.d.relsem);
-	//sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
+        primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
+	sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
       }
       cbuf ^= 1;
     }
-    //printf("pixeldatasum=%u\n", sum);
-    //printf("Releasing egl context in readback\n");
-    primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
-    //printf("done\n");
-    sem_post(&di.r.relsem); // Unblock main thread only after D::work has completed
     profiler.tick();
   }
   return NULL;
