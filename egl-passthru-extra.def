@@ -1,0 +1,5 @@
+P(_eglInitDriverFallbacks)
+P(_eglLog)
+P(_eglError)
+P(_eglReleaseDisplayResources)
+P(_eglCleanupDisplay)

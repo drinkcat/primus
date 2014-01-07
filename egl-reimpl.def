@@ -1,4 +1,4 @@
-// GLX Functions implemented by primus
+// EGL Functions implemented by primus
 DEF_EGL_PROTO(__eglMustCastToProperFunctionPointerType, eglGetProcAddress, (const char* procname))
 DEF_EGL_PROTO(EGLContext, eglCreateContext, (EGLDisplay dpy, EGLConfig config, EGLContext share_context, const EGLint *attrib_list),config,share_context,EGLint)
 DEF_EGL_PROTO(EGLBoolean, eglMakeCurrent, (EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx),draw,read,ctx)
@@ -10,8 +10,4 @@ DEF_EGL_PROTO(EGLBoolean, eglDestroySurface, (EGLDisplay dpy, EGLSurface surface
 DEF_EGL_PROTO(EGLContext, eglGetCurrentContext, (void))
 DEF_EGL_PROTO(EGLBoolean, eglDestroyContext, (EGLDisplay dpy, EGLContext ctx),ctx)
 DEF_EGL_PROTO(EGLBoolean, eglQuerySurface, (EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint *value),surface,attribute,value)
-/* FIXME: I think eglGetDisplay can be hacked to return the proper EGLDisplay and remove a
- * lot of other hacks...  */
 DEF_EGL_PROTO(EGLDisplay, eglGetDisplay, (EGLNativeDisplayType display_id),display_id)
-/* FIXME: Those are actually no-ops.. */
-DEF_EGL_PROTO(EGLBoolean, eglBindAPI, (EGLenum api),api)

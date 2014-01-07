@@ -1,11 +1,11 @@
 
-data = File.open("/usr/include/EGL/egl.h").to_a.join.gsub(/[\n\t]/, ' ').split(/;/)
-#data = File.open("/usr/include/GLES3/gl3.h").to_a.join.gsub(/[\n\t]/, ' ').split(/;/)
+#data = File.open("/usr/include/EGL/egl.h").to_a.join.gsub(/[\n\t]/, ' ').split(/(;|\*\/)/)
+data = File.open("/usr/include/GLES3/gl3.h").to_a.join.gsub(/[\n\t]/, ' ').split(/(;|\*\/)/)
 
 data.each{ |statement|
 #  puts statement
-  next if (!statement.match(/^ *EGLAPI.*/))
-#  next if (!statement.match(/^ *GL_APICALL.*/))
+#  next if (!statement.match(/^ *EGLAPI.*/))
+  next if (!statement.match(/^ *GL_APICALL.*/))
   statement.gsub!(/ +/, ' ')
   statement.gsub!(/^ /, '')
   #fields = statement.split(' ')
@@ -30,4 +30,5 @@ data.each{ |statement|
   end
 
   puts "DEF_EGL_PROTO(#{retval}, #{func}, (#{params})#{extra})"
+  #puts "P(#{func})"
 };

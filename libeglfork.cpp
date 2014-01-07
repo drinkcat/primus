@@ -581,10 +581,6 @@ static void* readback_work(void *vd)
   return NULL;
 }
 
-EGLBoolean eglBindAPI(EGLenum  api) {
-  return primus.afns.eglBindAPI(api);
-}
-
 EGLContext eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext share_context,
                             EGLint const *attrib_list)
 {
@@ -1028,9 +1024,6 @@ const char *glXQueryExtensionsString(Display *dpy, int screen)
 // OpenGL ABI specifies that anything above OpenGL 1.2 + ARB_multitexture must
 // be obtained via glXGetProcAddress, but some applications link against
 // extension functions, and Mesa and vendor libraries let them
-#ifndef PRIMUS_STRICT
-#warning Enabled workarounds for applications demanding more than promised by the OpenGL ABI
-
 // OpenGL extension forwarders
 #define P(name) \
 asm(".type " #name ", %gnu_indirect_function"); \
@@ -1043,5 +1036,8 @@ void *ifunc_##name(void) \
   return val;                                                           \
 }
 #include "egl-passthru.def"
-#undef P
+#ifndef PRIMUS_STRICT
+#warning Enabled extra EGL functions pass-thru
+#include "egl-passthru-extra.def"
 #endif
+#undef P
