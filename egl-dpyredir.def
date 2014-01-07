@@ -1,7 +1,0 @@
-// EGL functions which need to be simply forwarded
-DEF_EGL_PROTO(EGLBoolean, eglChooseConfig, (EGLDisplay dpy, const EGLint *attrib_list,
-EGLConfig *configs, EGLint config_size, EGLint *num_config), attrib_list, configs, config_size, num_config)
-DEF_EGL_PROTO(EGLBoolean, eglInitialize, (EGLDisplay dpy, EGLint *major, EGLint *minor),major,minor)
-DEF_EGL_PROTO(EGLBoolean, eglGetConfigs, (EGLDisplay dpy, EGLConfig *configs, EGLint config_size, EGLint *num_config),configs,config_size,num_config)
-DEF_EGL_PROTO(char const*, eglQueryString, (EGLDisplay dpy, EGLint name),name)
-//DEF_EGL_PROTO(EGLBoolean, eglTerminate, (EGLDisplay dpy))

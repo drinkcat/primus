@@ -86,8 +86,7 @@ public:
   // Declare functions as fields of the struct
 #define DEF_EGL_PROTO(ret, name, args, ...) ret (*name) args;
 #include "egl-reimpl.def"
-#include "egl-dpyredir.def"
-#include "gles-passthru.def"
+#include "gles-passthru.def" 
 #include "gles-needed.def"
 #undef DEF_EGL_PROTO
   CapturedFns(const char *lib)
@@ -101,7 +100,6 @@ name = (ret (*) args)dlsym(#name); \
 printf("%s=%p\n", #name, name);                 \
   } while (0);
 #include "egl-reimpl.def"
-#include "egl-dpyredir.def"
 #undef DEF_EGL_PROTO
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
 name = (ret (*) args)egldlsym(#name); \
@@ -260,22 +258,9 @@ static struct PrimusInfo {
     die_if(!ddpy, "failed to open main X display\n");
     die_if(!needed_global, "failed to load PRIMUS_LOAD_GLOBAL\n");
     XInitThreads();
-    sync = 0;
     loglevel = 2;
-    printf("loglevel=%d\n", loglevel);
-
-    EGLint majorVersion;
-    EGLint minorVersion;
-    EGLBoolean ret;
-
-    printf("PRIMUS INIT\n");
 
     adisplay = afns.eglGetDisplay((EGLNativeDisplayType)adpy);
-
-    ret = afns.eglInitialize(adisplay, &majorVersion, &minorVersion);
-    die_if(!ret, "broken EGL on accel X display (eglInitialize)\n");
-
-    printf("PRIMUS INIT DONE\n");
   }
 } primus;
 
@@ -806,7 +791,6 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
   return 1;
 }
 
-/* FIXME: This removes the need for passthru hacks */
 EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
   printf("primus eglGetDisplay\n");
   primus.ddpy = display_id;
@@ -996,14 +980,6 @@ int glXGetConfig(Display *dpy, XVisualInfo *visual, int attrib, int *value)
 }
 #endif
 
-// GLX forwarders that reroute to adpy
-#define DEF_EGL_PROTO(ret, name, par, ...) \
-ret name par \
-{ printf("Redirecting %s\n", #name);                                  \
-return primus.afns.name(dpy, __VA_ARGS__); }
-#include "egl-dpyredir.def"
-#undef DEF_EGL_PROTO
-
 // OpenGL forwarders
 #define DEF_EGL_PROTO(ret, name, par, ...) \
 static ret l##name par \
@@ -1034,13 +1010,11 @@ __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procName)
   static const char * const redefined_names[] = {
 #define DEF_EGL_PROTO(ret, name, args, ...) #name,
 #include "egl-reimpl.def"
-#include "egl-dpyredir.def"
 #undef  DEF_EGL_PROTO
   };
   static const __eglMustCastToProperFunctionPointerType redefined_fns[] = {
 #define DEF_EGL_PROTO(ret, name, args, ...) (__eglMustCastToProperFunctionPointerType)name,
 #include "egl-reimpl.def"
-#include "egl-dpyredir.def"
 #undef  DEF_EGL_PROTO
   };
   enum {n_redefined = sizeof(redefined_fns) / sizeof(redefined_fns[0])};
