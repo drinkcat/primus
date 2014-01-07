@@ -558,15 +558,14 @@ static void* readback_work(void *vd)
       buffers[1] = malloc(4*width*height);
     }
 
+    primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
+
     GLint ext_format, ext_type;
     glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &ext_format);
     glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &ext_type);
     //printf("FORMAT/TYPE: %x %x\n", ext_format, ext_type);
     //printf("FORMAT/TYPE: GL_RGB=%x GL_RGBA=%x\n", GL_RGB, GL_RGBA);
     //printf("FORMAT/TYPE: GL_UNSIGNED_BYTE=%x\n", GL_UNSIGNED_BYTE);
-    /* FIXME: Detect if RGB or RGBA need to be used */
-
-    primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
 
     di.pixelformat = ext_format;
     di.pixeltype = ext_type;
@@ -583,7 +582,7 @@ static void* readback_work(void *vd)
     else
       di.pixeldata = buffers[cbuf^1];
     double map_time = Profiler::get_timestamp();
-    //printf("pixeldata=%p\n", pixeldata);
+    //FIXME: Absurd!
     map_time = Profiler::get_timestamp() - map_time;
     sleep_usec = (map_time * 1e6 + sleep_usec) * primus.autosleep / 100;
     profiler.tick();
@@ -924,10 +923,6 @@ const char *glXQueryExtensionsString(Display *dpy, int screen)
 }
 #endif
 
-// OpenGL ABI specifies that anything above OpenGL 1.2 + ARB_multitexture must
-// be obtained via glXGetProcAddress, but some applications link against
-// extension functions, and Mesa and vendor libraries let them
-// OpenGL extension forwarders
 #define P(name) \
 asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
