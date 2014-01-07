@@ -16,6 +16,7 @@
 #pragma GCC visibility push(default)
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
+#include <GLES2/gl2ext.h>
 #pragma GCC visibility pop
 
 #define primus_print(c, ...) do { if (c) fprintf(stderr, "primus: " __VA_ARGS__); } while (0)
@@ -93,6 +94,8 @@ struct DrawableInfo {
   int width, height;
   enum ReinitTodo {NONE, RESIZE, SHUTDOWN} reinit;
   void *pixeldata;
+  int pixelformat;
+  int pixeltype;
   GLsync sync;
   EGLContext actx;
 
@@ -291,7 +294,6 @@ static void note_geometry(Display *dpy, Drawable draw, int *width, int *height)
   int x, y;
   unsigned bw, d;
   XGetGeometry(dpy, draw, &root, &x, &y, (unsigned *)width, (unsigned *)height, &bw, &d);
-  printf("Geometry %p %lu %d %d\n", dpy, draw, *width, *height);
 }
 
 #if 0
@@ -325,6 +327,79 @@ static EGLBoolean match_config(int atod, EGLConfig config, EGLConfig* pconfig)
   return ret;
 }
 #endif
+
+static void rgb_to_bgra(void* __restrict__ inp, void* __restrict__ outp,
+                         int width, int height) {
+  die_if(!inp || !outp);
+  int i,j;
+  uint32_t* in = (uint32_t*)inp;
+  uint32_t* out = (uint32_t*)outp;
+  int wblock = width/4;
+  int wreminder = width%4;
+
+  out += width*(height-1);
+  for (j = 0; j < height; j++) {
+    uint32_t i0, i1, i2;
+    for (i = 0; i < wblock; i++) {
+      i0 = in[0];
+      i1 = in[1];
+      i2 = in[2];
+      out[0] = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
+      out[1] = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
+      out[2] = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
+      out[3] = (i2 & 0x0000ff00) << 8  | (i2 & 0x00ff0000) >> 8  | (i2 & 0xff000000) >> 24;
+      in += 3;
+      out += 4;
+    }
+    if (wreminder > 0) {
+      i0 = *in++;
+      *out++ = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
+      if (wreminder > 1) {
+        i1 = *in++;
+          *out++ = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
+          if (wreminder > 2) {
+            i2 = *in++;
+            *out++ = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
+          }
+      }
+    }
+    out -= 2*width;
+  }
+}
+
+static void rgba_to_bgra(void* __restrict__ inp, void* __restrict__ outp,
+                         int width, int height) {
+    die_if(!inp || !outp);
+    int i,j;
+    uint32_t* in = (uint32_t*)inp;
+    uint32_t* out = (uint32_t*)outp;
+
+    out += width*(height-1);
+    for (j = 0; j < height; j++) {
+      for (i = 0; i < width; i ++) {
+        // Swap R and B
+        int val = *(in++);
+        val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
+        *(out++) = val;
+      }
+      out -= 2*width;
+    }
+}
+
+static void bgra_to_bgra(void* __restrict__ inp, void* __restrict__ outp,
+                         int width, int height) {
+    die_if(!inp || !outp);
+    int i,j;
+    uint32_t* in = (uint32_t*)inp;
+    uint32_t* out = (uint32_t*)outp;
+
+    out += width*(height-1);
+    for (j = 0; j < height; j++) {
+      memcpy(out, in, width*4);
+      in += width;
+      out -= width;
+    }
+}
 
 static void* display_work(void *vd)
 {
@@ -370,59 +445,18 @@ static void* display_work(void *vd)
       continue;
     }
 
-#if 0 // RGB 24-bit to 32-bit
-    /* FIXME: Data needs to be flipped... */
-    int i,j;
-    int instride = (width*3+3)/4;
-    int wblock = width/4;
-    int wreminder = width%4;
-    uint32_t* in = (uint32_t*)di.pixeldata;
-    uint32_t* out = (uint32_t*)imgbuffer;
-    for (j = 0; j < height; j++) {
-      uint32_t i0, i1, i2;
-      for (i = 0; i < wblock; i++) {
-        i0 = in[0];
-        i1 = in[1];
-        i2 = in[2];
-        out[0] = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
-        out[1] = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
-        out[2] = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
-        out[3] = (i2 & 0x0000ff00) << 8  | (i2 & 0x00ff0000) >> 8  | (i2 & 0xff000000) >> 24;
-        in += 3;
-        out += 4;
-      }
-      if (wreminder > 0) {
-        i0 = *in++;
-        *out++ = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
-        if (wreminder > 1) {
-          i1 = *in++;
-          *out++ = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
-          if (wreminder > 2) {
-            i2 = *in++;
-            *out++ = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
-          }
-        }
-      }
+    if (di.pixeltype == GL_UNSIGNED_BYTE) {
+      if (di.pixelformat == GL_RGBA)
+        rgba_to_bgra(di.pixeldata, imgbuffer, width, height);
+      else if (di.pixelformat == GL_RGB)
+        rgb_to_bgra(di.pixeldata, imgbuffer, width, height);
+      else if (di.pixelformat == GL_BGRA_EXT)
+        bgra_to_bgra(di.pixeldata, imgbuffer, width, height);
+      else
+        die_if(1, "Invalid pixel format.\n");
+    } else {
+      die_if(1, "Invalid pixel type.\n");
     }
-#endif
-#if 1 // RGBA 32-bit to 32-bit
-    int i,j;
-    uint32_t* in = (uint32_t*)di.pixeldata;
-    uint32_t* out = (uint32_t*)imgbuffer;
-
-    die_if(!di.pixeldata || !imgbuffer);
-
-    out += width*(height-1);
-    for (j = 0; j < height; j++) {
-      for (i = 0; i < width; i ++) {
-        // Swap R and B
-        int val = *(in++);
-        val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
-        *(out++) = val;
-      }
-      out -= 2*width;
-    }
-#endif
 
     if (!primus.sync)
       sem_post(&di.d.relsem); // Unlock as soon as possible
@@ -431,17 +465,11 @@ static void* display_work(void *vd)
     XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
     XFlush(ddpy);
 
+    /* Listening to events does not work (we compete against the application!) */
     profiler.tick();
-    /* FIXME: This is not working at all */
-    for (int pending = XPending(ddpy); pending > 0; pending--)
-    {
-      XEvent event;
-      XNextEvent(ddpy, &event);
-      printf("Got event! %d\n", event.type);
-      if (event.type == ConfigureNotify) {
-	di.update_geometry(event.xconfigure.width, event.xconfigure.height);
-      }
-    }
+    int nwidth, nheight;
+    note_geometry(ddpy, di.window, &nwidth, &nheight);
+    di.update_geometry(nwidth, nheight);
     if (primus.sync)
       sem_post(&di.d.relsem); // Unlock only after drawing
     profiler.tick();
@@ -534,16 +562,17 @@ static void* readback_work(void *vd)
     GLint ext_format, ext_type;
     glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &ext_format);
     glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &ext_type);
-/*    printf("FORMAT/TYPE: %x %x\n", ext_format, ext_type);
-    printf("FORMAT/TYPE: GL_RGB=%x GL_RGBA=%x\n", GL_RGB, GL_RGBA);
-    printf("FORMAT/TYPE: GL_UNSIGNED_BYTE=%x\n", GL_UNSIGNED_BYTE);*/
+    //printf("FORMAT/TYPE: %x %x\n", ext_format, ext_type);
+    //printf("FORMAT/TYPE: GL_RGB=%x GL_RGBA=%x\n", GL_RGB, GL_RGBA);
+    //printf("FORMAT/TYPE: GL_UNSIGNED_BYTE=%x\n", GL_UNSIGNED_BYTE);
     /* FIXME: Detect if RGB or RGBA need to be used */
 
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
 
-    /* RGBA is painfully slow on MALI (done in CPU?), if the configuration does not
-     * have an alpha channel to start with */
-    primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffers[cbuf]);
+    di.pixelformat = ext_format;
+    di.pixeltype = ext_type;
+
+    primus.afns.glReadPixels(0, 0, width, height, ext_format, ext_type, buffers[cbuf]);
     if (!primus.sync) {
       //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
