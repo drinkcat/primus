@@ -389,7 +389,7 @@ static void rgba_to_bgra(void* __restrict__ inp, void* __restrict__ outp,
 static void bgra_to_bgra(void* __restrict__ inp, void* __restrict__ outp,
                          int width, int height) {
     die_if(!inp || !outp);
-    int i,j;
+    int j;
     uint32_t* in = (uint32_t*)inp;
     uint32_t* out = (uint32_t*)outp;
 
@@ -463,7 +463,6 @@ static void* display_work(void *vd)
     profiler.tick();
 
     XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
-    XFlush(ddpy);
 
     /* Listening to events does not work (we compete against the application!) */
     profiler.tick();
@@ -647,13 +646,6 @@ static EGLSurface create_pbuffer(EGLDisplay dpy, DrawableInfo &di)
   EGLSurface surface = primus.afns.eglCreatePbufferSurface(dpy, di.config, pbattrs);
   printf("create_pbuffer %p %d %d config=%p %p\n", dpy, di.width, di.height, di.config, surface);
 
-#if 0
-  EGLint val;
-
-  primus.afns.eglQuerySurface(dpy, surface,  EGL_CONFIG_ID, &val);
-  printf("eglQuerySurface=%d\n", val);
-#endif
-
   return surface;
 }
 
@@ -685,11 +677,10 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
 #endif
     }
     di.kind = di.XWindow;
-    note_geometry(primus.ddpy, di.window, &di.width, &di.height); //FIXME: check dpy
+    note_geometry(primus.ddpy, di.window, &di.width, &di.height);
   }
   else if (ctx && di.config != primus.contexts[ctx].config)
   {
-    printf("case 2 %p %p\n", di.config, primus.contexts[ctx].config);
     if (di.pbuffer)
     {
       primus_warn("recreating incompatible pbuffer\n");
@@ -719,8 +710,7 @@ EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLC
 
 EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 {
-  //printf("primus eglSwapBuffers %p %p\n", dpy, drawable);
-  XFlush(primus.adpy); //FIXME: check dpy
+  XFlush(primus.ddpy);
   assert(primus.drawables.known(drawable));
   DrawableInfo &di = primus.drawables[drawable];
   if (!primus.afns.eglSwapBuffers(dpy, di.pbuffer)) {
@@ -820,75 +810,6 @@ EGLSurface eglCreatePbufferSurface(EGLDisplay dpy, EGLConfig config, const EGLin
   return pbuffer;
 }
 
-#if 0
-GLXPixmap glXCreatePixmap(Display *dpy, EGLConfig config, Pixmap pixmap, const int *attribList)
-{
-  GLXPixmap glxpix = primus.dfns.glXCreatePixmap(dpy, primus.dconfigs[0], pixmap, attribList);
-  DrawableInfo &di = primus.drawables[glxpix];
-  di.kind = di.Pixmap;
-  di.config = config;
-  note_geometry(dpy, pixmap, &di.width, &di.height);
-  return glxpix;
-}
-
-void glXDestroyPixmap(Display *dpy, GLXPixmap pixmap)
-{
-  assert(primus.drawables.known(pixmap));
-  primus.drawables.erase(pixmap);
-  primus.dfns.glXDestroyPixmap(dpy, pixmap);
-}
-
-GLXPixmap glXCreateGLXPixmap(Display *dpy, XVisualInfo *visual, Pixmap pixmap)
-{
-  GLXPixmap glxpix = primus.dfns.glXCreateGLXPixmap(dpy, visual, pixmap);
-  DrawableInfo &di = primus.drawables[glxpix];
-  di.kind = di.Pixmap;
-  note_geometry(dpy, pixmap, &di.width, &di.height);
-  EGLConfig *acfgs = match_config(visual);
-  di.config = *acfgs;
-  return glxpix;
-}
-
-void glXDestroyGLXPixmap(Display *dpy, GLXPixmap pixmap)
-{
-  glXDestroyPixmap(dpy, pixmap);
-}
-
-static XVisualInfo *match_visual(int attrs[])
-{
-  XVisualInfo *vis = glXChooseVisual(primus.ddpy, 0, attrs);
-  for (int i = 2; attrs[i] != None && vis; i += 2)
-  {
-    int tmp = attrs[i+1];
-    primus.dfns.glXGetConfig(primus.ddpy, vis, attrs[i], &attrs[i+1]);
-    if (tmp != attrs[i+1])
-      vis = NULL;
-  }
-  return vis;
-}
-
-XVisualInfo *glXGetVisualFromConfig(Display *dpy, EGLConfig config)
-{
-  if (!primus.afns.glXGetVisualFromConfig(primus.adpy, config))
-    return NULL;
-  int i, attrs[] = {
-    GLX_RGBA, GLX_DOUBLEBUFFER,
-    GLX_RED_SIZE, 0, GLX_GREEN_SIZE, 0, GLX_BLUE_SIZE, 0,
-    GLX_ALPHA_SIZE, 0, GLX_DEPTH_SIZE, 0, GLX_STENCIL_SIZE, 0,
-    GLX_SAMPLE_BUFFERS, 0, GLX_SAMPLES, 0, None
-  };
-  for (i = 2; attrs[i] != None; i += 2)
-    primus.afns.glXGetConfigAttrib(primus.adpy, config, attrs[i], &attrs[i+1]);
-  XVisualInfo *vis = NULL;
-  for (i -= 2; i >= 0 && !vis; i -= 2)
-  {
-    vis = match_visual(attrs);
-    attrs[i] = None;
-  }
-  return vis;
-}
-#endif
-
 EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute, EGLint *value)
 {
   printf("eglGetConfigAttrib\n");
@@ -903,66 +824,15 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute
   }
 }
 
-EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface draw, EGLint attribute, EGLint *value)
-{
-  return primus.afns.eglQuerySurface(primus.adpy, lookup_pbuffer(dpy, draw, NULL), attribute, value);
-}
-
-#if 0
-void glXUseXFont(Font font, int first, int count, int list)
-{
-  unsigned long prop;
-  XFontStruct *fs = XQueryFont(primus.ddpy, font);
-  XGetFontProperty(fs, XA_FONT, &prop);
-  char *xlfd = XGetAtomName(primus.ddpy, prop);
-  Font afont = XLoadFont(primus.adpy, xlfd);
-  primus.afns.glXUseXFont(afont, first, count, list);
-  XUnloadFont(primus.adpy, afont);
-  XFree(xlfd);
-  XFreeFontInfo(NULL, fs, 1);
-}
-#endif
-
 EGLContext eglGetCurrentContext(void)
 {
   return primus.afns.eglGetCurrentContext();
 }
 
-#if 0
-EGLSurface glXGetCurrentDrawable(void)
+EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface draw, EGLint attribute, EGLint *value)
 {
-  return tsdata.drawable;
+  return primus.afns.eglQuerySurface(primus.adpy, lookup_pbuffer(dpy, draw, NULL), attribute, value);
 }
-
-void glXWaitGL(void)
-{
-}
-
-void glXWaitX(void)
-{
-}
-
-Display *glXGetCurrentDisplay(void)
-{
-  return tsdata.dpy;
-}
-
-EGLSurface glXGetCurrentReadDrawable(void)
-{
-  return tsdata.read_drawable;
-}
-
-// Application sees ddpy-side Visuals, but adpy-side Configs and Contexts
-XVisualInfo* glXChooseVisual(Display *dpy, int screen, int *attribList)
-{
-  return primus.dfns.glXChooseVisual(dpy, screen, attribList);
-}
-
-int glXGetConfig(Display *dpy, XVisualInfo *visual, int attrib, int *value)
-{
-  return primus.dfns.glXGetConfig(dpy, visual, attrib, value);
-}
-#endif
 
 // OpenGL forwarders
 #define DEF_EGL_PROTO(ret, name, par, ...) \
