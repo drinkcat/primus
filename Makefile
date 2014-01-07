@@ -40,5 +40,5 @@ $(LIBDIR)/libGL.so.1: libglfork.cpp *.def Makefile
 
 $(LIBDIR)/libGLESv2.so.2: libeglfork.cpp *.def Makefile
 	mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt -O3
-	ln -sf libGLESv2.so.2 lib/-libEGL.so.1
+	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt -O0 -g
+	ln -sf libGLESv2.so.2 lib/libEGL.so.1

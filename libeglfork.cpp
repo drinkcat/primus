@@ -74,13 +74,11 @@ struct CapturedFns {
     handle[1] = mdlopen(libglesv2, RTLD_LAZY);
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
 name = (ret (*) args)real_dlsym(handle[0], #name); \
-printf("%s=%p\n", #name, name);                 \
   } while (0);
 #include "egl-reimpl.def"
 #undef DEF_EGL_PROTO
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
 name = (ret (*) args)egldlsym(#name); \
-printf("B %s=%p\n", #name, name);                 \
   } while (0);
 #include "gles-passthru.def"
 #undef DEF_EGL_PROTO
