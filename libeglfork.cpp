@@ -24,63 +24,42 @@
 #define primus_warn(...) primus_print(primus.loglevel >= 1, "warning: " __VA_ARGS__)
 #define primus_perf(...) primus_print(primus.loglevel >= 2, "profiling: " __VA_ARGS__)
 
+// Try to load any of the colon-separated libraries
+static void *mdlopen(const char *paths, int flag)
+{
+  char *p = strdupa(paths);
+  char errors[1024], *errors_ptr = errors, *errors_end = errors + 1024;
+  for (char *c = p; c; p = c + 1)
+  {
+    if ((c = strchr(p, ':')))
+      *c = 0;
+    die_if(p[0] != '/', "need absolute library path: %s\n", p);
+    void *handle = dlopen(p, flag);
+    if (handle)
+      return handle;
+    errors_ptr += snprintf(errors_ptr, errors_end - errors_ptr, "%s\n", dlerror());
+  }
+  die_if(true, "failed to load any of the libraries: %s\n%s", paths, errors);
+}
+
+static void *real_dlsym(void *handle, const char *symbol)
+{
+  typedef void* (*dlsym_fn)(void *, const char*);
+  static dlsym_fn pdlsym = (dlsym_fn) dlsym(dlopen("libdl.so.2", RTLD_LAZY), "dlsym");
+  return pdlsym(handle, symbol);
+}
+
 // Pointers to implemented/forwarded GLX and OpenGL functions
 struct CapturedFns {
-//  void *handle;
-
-private:
-  int handlecount;
-  void *handle[16];
-  typedef void* (*dlsym_fn)(void *, const char*);
-  dlsym_fn pdlsym;
-
-  // Try to load any of the colon-separated libraries
-  void mdlopen(const char *paths, int flag)
-  {
-    char *p = strdupa(paths);
-    char errors[1024], *errors_ptr = errors, *errors_end = errors + 1024;
-    for (char *c = p; c; p = c + 1)
-    {
-      if ((c = strchr(p, ':')))
-        *c = 0;
-      die_if(p[0] != '/', "need absolute library path: %s\n", p);
-      void *c_handle = dlopen(p, flag);
-      if (c_handle)
-      {
-        handle[handlecount] = c_handle;
-        handlecount++;
-        if (handlecount == 16)
-          break;
-      }
-      errors_ptr += snprintf(errors_ptr, errors_end - errors_ptr, "%s\n", dlerror());
-    }
-    die_if(handlecount == 0, "failed to load any of the libraries: %s\n%s", paths, errors);
-  }
-
-public:
-  int handle_valid() {
-    return handlecount > 0;
-  }
-
-  void *dlsym(const char *symbol)
-  {
-    //printf("Loading %s\n", symbol);
-    int i;
-    for (i = 0; i < handlecount; i++) {
-      void* p = pdlsym(handle[i], symbol);
-      if (p)
-        return p;
-    }
-    return NULL;
-  }
+  void *handle[2]; /* 0: EGL, 1: GLESv2 */
 
   /* First try to load the symbol with eglGetProcAddress, then fallback on dlsym */
-  void *egldlsym(const char *symbol)
+  inline void *egldlsym(const char *symbol)
   {
     void* p = (void*)this->eglGetProcAddress(symbol);
     if (p)
       return p;
-    return dlsym(symbol);
+    return real_dlsym(handle[1], symbol);
   }
 
   // Declare functions as fields of the struct
@@ -89,14 +68,12 @@ public:
 #include "gles-passthru.def" 
 #include "gles-needed.def"
 #undef DEF_EGL_PROTO
-  CapturedFns(const char *lib)
+  CapturedFns(const char *libegl, const char *libglesv2)
   {
-    handlecount = 0;
-    pdlsym = (dlsym_fn)::dlsym(dlopen("libdl.so.2", RTLD_LAZY), "dlsym");
-    printf("lib=%s\n", lib);
-    mdlopen(lib, RTLD_LAZY);
+    handle[0] = mdlopen(libegl, RTLD_LAZY);
+    handle[1] = mdlopen(libglesv2, RTLD_LAZY);
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
-name = (ret (*) args)dlsym(#name); \
+name = (ret (*) args)real_dlsym(handle[0], #name); \
 printf("%s=%p\n", #name, name);                 \
   } while (0);
 #include "egl-reimpl.def"
@@ -111,10 +88,8 @@ printf("B %s=%p\n", #name, name);                 \
   }
   ~CapturedFns()
   {
-    int i;
-    for (i = 0; i < handlecount; i++) {
-        dlclose(handle[i]);
-    }
+    dlclose(handle[0]);
+    dlclose(handle[1]);
   }
 };
 
@@ -200,18 +175,9 @@ struct ContextsInfo: public std::map<EGLContext, ContextInfo> {
 // overridden by environment
 #define getconf(V) (getenv(#V) ? getenv(#V) : V)
 
-// Runs before all other initialization takes place
-struct EarlyInitializer {
-  EarlyInitializer(const char **adpy_strp, const char **libgla_strp)
-  {
-    //FIXME: no-op
-  }
-};
-
 // Process-wide data
 static struct PrimusInfo {
-  const char *adpy_str, *libgla_str;
-  EarlyInitializer ei;
+  const char *adpy_str, *libegla_str, *libglesv2a_str;
   // Readback-display synchronization method
   // 0: no sync, 1: D lags behind one frame, 2: fully synced
   int sync;
@@ -234,7 +200,6 @@ static struct PrimusInfo {
   // FIXME: there are race conditions in accesses to these
   DrawablesInfo drawables;
   ContextsInfo contexts;
-  EGLConfig *dconfigs;
 
   /* Fake pointer to return as EGLSurface in createWindow, incremented
    * to make sure it stays unique */
@@ -242,8 +207,8 @@ static struct PrimusInfo {
 
   PrimusInfo():
     adpy_str(getconf(PRIMUS_DISPLAY)),
-    libgla_str(getconf(PRIMUS_libGLa)),
-    ei(&adpy_str, &libgla_str),
+    libegla_str(getconf(PRIMUS_libEGLa)),
+    libglesv2a_str(getconf(PRIMUS_libGLESv2a)),
     sync(atoi(getconf(PRIMUS_SYNC))),
     loglevel(atoi(getconf(PRIMUS_VERBOSE))),
     dispmethod(atoi(getconf(PRIMUS_UPLOAD))),
@@ -251,7 +216,7 @@ static struct PrimusInfo {
     adpy(XOpenDisplay(adpy_str)),
     ddpy(XOpenDisplay(NULL)),
     needed_global(dlopen(getconf(PRIMUS_LOAD_GLOBAL), RTLD_LAZY | RTLD_GLOBAL)),
-    afns(libgla_str),
+    afns(libegla_str, libglesv2a_str),
     fakesurface(0xDEAD0000)
   {
     die_if(!adpy, "failed to open secondary X display\n");
@@ -988,8 +953,8 @@ asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
-    /*printf("OGL Calling %s\n", #name);*/                              \
-    void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : (void*)l##name; \
+  /*printf("OGL Calling %s\n", #name);*/                                \
+    void* val = primus.afns.handle[1] ? real_dlsym(primus.afns.handle[1], #name) : (void*)l##name; \
         /*printf("Val %p\n", val);   */                                 \
     return val;\
 }
@@ -1085,7 +1050,7 @@ void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
   printf("non-strict Calling %s\n", #name);                             \
-  void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : NULL; \
+  void* val = primus.afns.handle[0] ? real_dlsym(primus.afns.handle[0], #name) : NULL; \
   printf("Val %p\n", val);                                              \
   return val;                                                           \
 }
