@@ -29,58 +29,59 @@ struct CapturedFns {
 //  void *handle;
 
 private:
-    int handlecount;
-    void *handle[16];
-    typedef void* (*dlsym_fn)(void *, const char*);
-    dlsym_fn pdlsym;
+  int handlecount;
+  void *handle[16];
+  typedef void* (*dlsym_fn)(void *, const char*);
+  dlsym_fn pdlsym;
 
-// Try to load any of the colon-separated libraries
-void mdlopen(const char *paths, int flag)
-{
-  char *p = strdupa(paths);
-  char errors[1024], *errors_ptr = errors, *errors_end = errors + 1024;
-  for (char *c = p; c; p = c + 1)
+  // Try to load any of the colon-separated libraries
+  void mdlopen(const char *paths, int flag)
   {
-    if ((c = strchr(p, ':')))
-      *c = 0;
-    die_if(p[0] != '/', "need absolute library path: %s\n", p);
-    void *c_handle = dlopen(p, flag);
-    if (c_handle) {
-      handle[handlecount] = c_handle;
-      handlecount++;
-      if (handlecount == 16)
+    char *p = strdupa(paths);
+    char errors[1024], *errors_ptr = errors, *errors_end = errors + 1024;
+    for (char *c = p; c; p = c + 1)
+    {
+      if ((c = strchr(p, ':')))
+        *c = 0;
+      die_if(p[0] != '/', "need absolute library path: %s\n", p);
+      void *c_handle = dlopen(p, flag);
+      if (c_handle)
+      {
+        handle[handlecount] = c_handle;
+        handlecount++;
+        if (handlecount == 16)
           break;
+      }
+      errors_ptr += snprintf(errors_ptr, errors_end - errors_ptr, "%s\n", dlerror());
     }
-    errors_ptr += snprintf(errors_ptr, errors_end - errors_ptr, "%s\n", dlerror());
+    die_if(handlecount == 0, "failed to load any of the libraries: %s\n%s", paths, errors);
   }
-  die_if(handlecount == 0, "failed to load any of the libraries: %s\n%s", paths, errors);
-}
 
 public:
-    int handle_valid() {
-        return handlecount > 0;
-    }
+  int handle_valid() {
+    return handlecount > 0;
+  }
 
-void *dlsym(const char *symbol)
-{
+  void *dlsym(const char *symbol)
+  {
     //printf("Loading %s\n", symbol);
     int i;
     for (i = 0; i < handlecount; i++) {
-        void* p = pdlsym(handle[i], symbol);
-        if (p)
-            return p;
+      void* p = pdlsym(handle[i], symbol);
+      if (p)
+        return p;
     }
     return NULL;
-}
+  }
 
-/* First try to load the symbol with eglGetProcAddress, then fallback on dlsym */
-void *egldlsym(const char *symbol)
-{
+  /* First try to load the symbol with eglGetProcAddress, then fallback on dlsym */
+  void *egldlsym(const char *symbol)
+  {
     void* p = (void*)this->eglGetProcAddress(symbol);
     if (p)
-	return p;
+      return p;
     return dlsym(symbol);
-}
+  }
 
   // Declare functions as fields of the struct
 #define DEF_EGL_PROTO(ret, name, args, ...) ret (*name) args;
@@ -206,51 +207,7 @@ struct ContextsInfo: public std::map<EGLContext, ContextInfo> {
 struct EarlyInitializer {
   EarlyInitializer(const char **adpy_strp, const char **libgla_strp)
   {
-#ifdef BUMBLEBEE_SOCKET
-    // Signal the Bumblebee daemon to bring up secondary X
-    errno = 0;
-    int sock = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    struct sockaddr_un addr;
-    addr.sun_family = AF_UNIX;
-    strncpy(addr.sun_path, getconf(BUMBLEBEE_SOCKET), sizeof(addr.sun_path));
-    connect(sock, (struct sockaddr *)&addr, sizeof(addr));
-    die_if(errno, "failed to connect to Bumblebee daemon: %s\n", strerror(errno));
-    static char c[256];
-    if (!getenv("PRIMUS_DISPLAY"))
-    {
-      send(sock, "Q VirtualDisplay", strlen("Q VirtualDisplay") + 1, 0);
-      recv(sock, &c, 255, 0);
-      die_if(memcmp(c, "Value: ", strlen("Value: ")), "unexpected query response\n");
-      *strchrnul(c, '\n') = 0;
-      *adpy_strp = strdup(c + 7);
-    }
-    if (!getenv("PRIMUS_libGLa"))
-    {
-      send(sock, "Q LibraryPath", strlen("Q LibraryPath") + 1, 0);
-      recv(sock, &c, 255, 0);
-      die_if(memcmp(c, "Value: ", strlen("Value: ")), "unexpected query response\n");
-      *strchrnul(c, '\n') = 0;
-      int npaths = 0;
-      for (char *p = c + 7; *p; npaths++, p = strchrnul(p + 1, ':'));
-      if (npaths)
-      {
-	char *bblibs = new char[strlen(c + 7) + npaths * strlen("/libGL.so.1") + 1], *b = bblibs, *n, *p;
-	for (p = c + 7; *p; p = n)
-	{
-	  n = strchrnul(p + 1, ':');
-	  b += sprintf(b, "%.*s/libGL.so.1", (int)(n - p), p);
-	}
-	*libgla_strp = bblibs;
-      }
-    }
-    send(sock, "C", 1, 0);
-    recv(sock, &c, 255, 0);
-    die_if(c[0] == 'N', "Bumblebee daemon reported: %s\n", c + 5);
-    die_if(c[0] != 'Y', "failure contacting Bumblebee daemon\n");
-    // the socket will be closed when the application quits, then bumblebee will shut down the secondary X
-#else
-//#warning Building without Bumblebee daemon support
-#endif
+    //FIXME: no-op
   }
 };
 
@@ -307,23 +264,22 @@ static struct PrimusInfo {
     printf("loglevel=%d\n", loglevel);
     //FIXME: int ncfg, attrs[] = {GLX_DOUBLEBUFFER, GL_TRUE, None};
     int ncfg;
-    EGLint attrs[] =
-        {
-            EGL_RED_SIZE,       8,
-            EGL_GREEN_SIZE,     8,
-            EGL_BLUE_SIZE,      8,
-            EGL_ALPHA_SIZE,     EGL_DONT_CARE,
-            EGL_DEPTH_SIZE,     EGL_DONT_CARE,
-            EGL_STENCIL_SIZE,   EGL_DONT_CARE,
-            EGL_SAMPLE_BUFFERS, 0,
-            EGL_NONE
-        };
+    EGLint attrs[] = {
+      EGL_RED_SIZE,       8,
+      EGL_GREEN_SIZE,     8,
+      EGL_BLUE_SIZE,      8,
+      EGL_ALPHA_SIZE,     EGL_DONT_CARE,
+      EGL_DEPTH_SIZE,     EGL_DONT_CARE,
+      EGL_STENCIL_SIZE,   EGL_DONT_CARE,
+      EGL_SAMPLE_BUFFERS, 0,
+      EGL_NONE
+    };
 
-   EGLint majorVersion;
-   EGLint minorVersion;
-   EGLBoolean ret;
+    EGLint majorVersion;
+    EGLint minorVersion;
+    EGLBoolean ret;
 
-   printf("PRIMUS INIT\n");
+    printf("PRIMUS INIT\n");
 
     adisplay = afns.eglGetDisplay((EGLNativeDisplayType)adpy);
     ddisplay = dfns.eglGetDisplay((EGLNativeDisplayType)ddpy);
@@ -342,7 +298,7 @@ static struct PrimusInfo {
     ret = dfns.eglChooseConfig(ddisplay, attrs, dconfigs, 1, &ncfg);
     die_if(!ret || ncfg == 0, "broken EGL on main X display (chooseconfig)\n");
 
-   printf("PRIMUS INIT DONE\n");
+    printf("PRIMUS INIT DONE\n");
   }
 } primus;
 
@@ -350,7 +306,7 @@ static struct PrimusInfo {
 static __thread struct {
   Display *dpy;
   EGLSurface drawable, read_drawable;
-    void make_current(Display *dpy, EGLSurface draw, EGLSurface read)
+  void make_current(Display *dpy, EGLSurface draw, EGLSurface read)
   {
     this->dpy = dpy;
     this->drawable = draw;
@@ -422,38 +378,6 @@ static void note_geometry(Display *dpy, Drawable draw, int *width, int *height)
   printf("Geometry %p %lu %d %d\n", dpy, draw, *width, *height);
 }
 
-#if 0
-static bool test_drawpixels_fast(Display *dpy, EGLContext ctx)
-{
-  int width = 1920, height = 1080;
-  int pbattrs[] = {GLX_PBUFFER_WIDTH, width, GLX_PBUFFER_HEIGHT, height, GLX_PRESERVED_CONTENTS, True, None};
-  EGLSurface pbuffer = primus.dfns.glXCreatePbuffer(dpy, primus.dconfigs[0], pbattrs);
-  primus.dfns.glXMakeCurrent(dpy, pbuffer, ctx);
-  GLuint pbo;
-  primus.dfns.glGenBuffers(1, &pbo);
-  primus.dfns.glBindBuffer(GL_PIXEL_UNPACK_BUFFER_EXT, pbo);
-  primus.dfns.glBufferData(GL_PIXEL_UNPACK_BUFFER_EXT, width*height*4, NULL, GL_STREAM_DRAW);
-  void *pixeldata = malloc(width*height*4);
-
-  double end = 0.2 + Profiler::get_timestamp();
-  int iters = 0;
-  do {
-    primus.dfns.glBufferSubData(GL_PIXEL_UNPACK_BUFFER_EXT, 0, width*height*4, pixeldata);
-    primus.dfns.glDrawPixels(width, height, GL_BGRA, GL_UNSIGNED_BYTE, NULL);
-    primus.dfns.glXSwapBuffers(dpy, pbuffer);
-    iters++;
-  } while (end > Profiler::get_timestamp());
-
-  free(pixeldata);
-  primus.dfns.glDeleteBuffers(1, &pbo);
-  primus.dfns.glXDestroyPbuffer(dpy, pbuffer);
-
-  bool is_fast = iters >= 12;
-  primus_perf("upload autodetection: will use %s path (%d iters)\n", is_fast ? "PBO" : "texture", iters);
-  return is_fast;
-}
-#endif
-
 // If atod is true, match adisplay config to ddisplay config. Otherwise
 // reverse the operation.
 static EGLBoolean match_config(int atod, EGLConfig config, EGLConfig* pconfig)
@@ -462,31 +386,27 @@ static EGLBoolean match_config(int atod, EGLConfig config, EGLConfig* pconfig)
   EGLBoolean ret;
   EGLint attrs[] =
   {
-       EGL_RED_SIZE,       0,
-       EGL_GREEN_SIZE,     0,
-       EGL_BLUE_SIZE,      0,
-       EGL_ALPHA_SIZE,     0,
-       EGL_DEPTH_SIZE,     0,
-       EGL_STENCIL_SIZE,   0,
-       EGL_SAMPLE_BUFFERS, 0,
-       EGL_NONE
+    EGL_RED_SIZE,       0,
+    EGL_GREEN_SIZE,     0,
+    EGL_BLUE_SIZE,      0,
+    EGL_ALPHA_SIZE,     0,
+    EGL_DEPTH_SIZE,     0,
+    EGL_STENCIL_SIZE,   0,
+    EGL_SAMPLE_BUFFERS, 0,
+    EGL_NONE
   };
   if (atod) {
-      for (int i = 0; attrs[i] != EGL_NONE; i += 2)
-          primus.afns.eglGetConfigAttrib(primus.adisplay, config, attrs[i], &attrs[i+1]);
-      ret = primus.dfns.eglChooseConfig(primus.ddisplay, attrs, pconfig, 1, &ncfg);
+    for (int i = 0; attrs[i] != EGL_NONE; i += 2)
+      primus.afns.eglGetConfigAttrib(primus.adisplay, config, attrs[i], &attrs[i+1]);
+    ret = primus.dfns.eglChooseConfig(primus.ddisplay, attrs, pconfig, 1, &ncfg);
   } else {
-
-      for (int i = 0; attrs[i] != EGL_NONE; i += 2)
-          primus.dfns.eglGetConfigAttrib(primus.ddisplay, config, attrs[i], &attrs[i+1]);
-      ret = primus.afns.eglChooseConfig(primus.adisplay, attrs, pconfig, 1, &ncfg);
+    for (int i = 0; attrs[i] != EGL_NONE; i += 2)
+      primus.dfns.eglGetConfigAttrib(primus.ddisplay, config, attrs[i], &attrs[i+1]);
+    ret = primus.afns.eglChooseConfig(primus.adisplay, attrs, pconfig, 1, &ncfg);
   }
   die_if(!ret, "Cannot match config\n");
   return ret;
 }
-
-#include <xcb/xcb.h>
-#include <xcb/xcb_image.h>
 
 static void* display_work(void *vd)
 {
@@ -494,15 +414,6 @@ static void* display_work(void *vd)
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
   int width, height;
-  GLuint program;
-  static const float quad_vertex_coords[]  = {-1, -1, 0, -1,  1, 0, 1, 1, 0,
-                                              -1, -1, 0,  1, -1, 0, 1, 1, 0};
-  static const float quad_texture_coords[] = { 0, 0, 0, 1, 1, 1,
-                                               0, 0, 1, 0, 1, 1};
-  GLint iVertex, iTexture, iTextureUniform;
-  GLuint textures[2] = {0};
-  GLuint pbos[2] = {0};
-  int ctex = 0;
   static const char *state_names[] = {"wait", "upload", "draw", "swap", NULL};
   Profiler profiler("display", state_names);
   //Display *ddpy = XOpenDisplay(NULL);
@@ -512,10 +423,10 @@ static void* display_work(void *vd)
   note_geometry(ddpy, di.window, &width, &height);
   di.update_geometry(width, height);
 
-    GC gc = XCreateGC(ddpy, di.window, 0, NULL);
+  GC gc = XCreateGC(ddpy, di.window, 0, NULL);
 
-char* imgbuffer = NULL;
-XImage* imgnative = NULL;
+  char* imgbuffer = NULL;
+  XImage* imgnative = NULL;
 
   for (;;)
   {
@@ -523,9 +434,10 @@ XImage* imgnative = NULL;
     profiler.tick(true);
     if (di.d.reinit)
     {
-//free(imgbuffer);
+      //FIXME: Memory leak!
+      //free(imgbuffer);
       if (imgnative)
-          XDestroyImage(imgnative);
+        XDestroyImage(imgnative);
       if (di.d.reinit == di.SHUTDOWN)
       {
 	XCloseDisplay(ddpy);
@@ -543,64 +455,66 @@ XImage* imgnative = NULL;
       continue;
     }
 
-    /* FIXME: Data needs to be flipped... */
 #if 0 // RGB 24-bit to 32-bit
-        int i,j;
-        int instride = (width*3+3)/4;
-        int wblock = width/4;
-        int wreminder = width%4;
-        uint32_t* in = (uint32_t*)di.pixeldata;
-        uint32_t* out = (uint32_t*)imgbuffer;
-        for (j = 0; j < height; j++) {
-            uint32_t i0, i1, i2;
-            for (i = 0; i < wblock; i++) {
-                i0 = in[0];
-                i1 = in[1];
-                i2 = in[2];
-                out[0] = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
-                out[1] = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
-                out[2] = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
-                out[3] = (i2 & 0x0000ff00) << 8  | (i2 & 0x00ff0000) >> 8  | (i2 & 0xff000000) >> 24;
-                in += 3;
-                out += 4;
-            }
-            if (wreminder > 0) {
-                i0 = *in++;
-                *out++ = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
-                if (wreminder > 1) {
-                    i1 = *in++;
-                    *out++ = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
-                    if (wreminder > 2) {
-                        i2 = *in++;
-                        *out++ = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
-                    }
-                }
-            }
+    /* FIXME: Data needs to be flipped... */
+    int i,j;
+    int instride = (width*3+3)/4;
+    int wblock = width/4;
+    int wreminder = width%4;
+    uint32_t* in = (uint32_t*)di.pixeldata;
+    uint32_t* out = (uint32_t*)imgbuffer;
+    for (j = 0; j < height; j++) {
+      uint32_t i0, i1, i2;
+      for (i = 0; i < wblock; i++) {
+        i0 = in[0];
+        i1 = in[1];
+        i2 = in[2];
+        out[0] = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
+        out[1] = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
+        out[2] = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
+        out[3] = (i2 & 0x0000ff00) << 8  | (i2 & 0x00ff0000) >> 8  | (i2 & 0xff000000) >> 24;
+        in += 3;
+        out += 4;
+      }
+      if (wreminder > 0) {
+        i0 = *in++;
+        *out++ = (i0 & 0x000000ff) << 16 | (i0 & 0x0000ff00)       | (i0 & 0x00ff0000) >> 16;
+        if (wreminder > 1) {
+          i1 = *in++;
+          *out++ = (i0 & 0xff000000) >> 8  | (i1 & 0x000000ff) << 8  | (i1 & 0x0000ff00) >> 8;
+          if (wreminder > 2) {
+            i2 = *in++;
+            *out++ = (i1 & 0x00ff0000)       | (i1 & 0xff000000) >> 16 | (i2 & 0x000000ff);
+          }
         }
+      }
+    }
 #endif
 #if 1 // RGBA 32-bit to 32-bit
-        int i,j;
-        uint32_t* in = (uint32_t*)di.pixeldata;
-        uint32_t* out = (uint32_t*)imgbuffer;
-        out += width*(height-1);
-        for (j = 0; j < height; j++) {
-            for (i = 0; i < width; i ++) {
-                // Swap R and B
-                int val = *(in++);
-                val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
-                *(out++) = val;
-            }
-            out -= 2*width;
-        }
+    int i,j;
+    uint32_t* in = (uint32_t*)di.pixeldata;
+    uint32_t* out = (uint32_t*)imgbuffer;
+
+    die_if(!di.pixeldata || !imgbuffer);
+
+    out += width*(height-1);
+    for (j = 0; j < height; j++) {
+      for (i = 0; i < width; i ++) {
+        // Swap R and B
+        int val = *(in++);
+        val = ((val >> 16) & 0xff) | ((val & 0xff) << 16) | (val & 0xff00ff00);
+        *(out++) = val;
+      }
+      out -= 2*width;
+    }
 #endif
 
     if (!primus.sync)
       sem_post(&di.d.relsem); // Unlock as soon as possible
     profiler.tick();
 
-        XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
-        XFlush(ddpy);
-/* flush the request */
+    XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
+    XFlush(ddpy);
 
     profiler.tick();
     for (int pending = XPending(ddpy); pending > 0; pending--)
@@ -623,7 +537,7 @@ static void* readback_work(void *vd)
   EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE, EGL_NONE };
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
-  int width, height;
+  int width = 0, height = 0;
   int cbuf = 0;
   void* buffers[2] = {NULL, NULL};
   unsigned sleep_usec = 0;
@@ -633,22 +547,14 @@ static void* readback_work(void *vd)
   if (!primus.sync)
     sem_post(&di.d.relsem); // No PBO is mapped initially
 
-   EGLint majorVersion;
-   EGLint minorVersion;
-   EGLBoolean ret;
+  EGLBoolean ret;
 
-/*   EGLBoolean ret = primus.afns.eglInitialize(primus.adisplay, &majorVersion, &minorVersion);
-  die_if(!ret,
-  "failed to init EGL in readback thread\n");*/
-
-   //primus.afns.eglBindAPI(EGL_OPENGL_ES_API);
-
- printf("di.pbuffer=%p di.config=%p\n", di.pbuffer, di.config);
- printf("di.maincontext=%p\n", di.maincontext);
+  printf("di.pbuffer=%p di.config=%p\n", di.pbuffer, di.config);
+  printf("di.maincontext=%p\n", di.maincontext);
 
   EGLContext context = primus.afns.eglCreateContext(primus.adisplay, di.config, di.maincontext, contextAttribs);
   die_if(!context,
-    "failed to acquire rendering context for readback thread\n");
+         "failed to acquire rendering context for readback thread\n");
 /*  die_if(!primus.afns.glXIsDirect(primus.adpy, context),
     "failed to acquire direct rendering context for readback thread\n");*/
   ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
@@ -668,9 +574,9 @@ static void* readback_work(void *vd)
     die_if(!ret, "eglMakeCurrent failed in readback thread loop\n");
     if (di.r.reinit)
     {
-        printf("readback_reinit\n");
-        free(buffers[0]);
-        free(buffers[1]);
+      printf("readback_reinit\n");
+      free(buffers[0]);
+      free(buffers[1]);
       clock_gettime(CLOCK_REALTIME, &tp);
       tp.tv_sec  += 1;
       // Wait for D worker, if active
@@ -717,15 +623,15 @@ static void* readback_work(void *vd)
      * have an alpha channel */
     primus.afns.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, buffers[cbuf]);
     if (!primus.sync) {
-        //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
+      //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
     usleep(sleep_usec);
     profiler.tick();
     /* map */
     if (primus.sync == 1) // Get the previous framebuffer
-        di.pixeldata = buffers[cbuf];
+      di.pixeldata = buffers[cbuf];
     else
-        di.pixeldata = buffers[cbuf^1];
+      di.pixeldata = buffers[cbuf^1];
     double map_time = Profiler::get_timestamp();
     //printf("pixeldata=%p\n", pixeldata);
     map_time = Profiler::get_timestamp() - map_time;
@@ -757,15 +663,15 @@ static void* readback_work(void *vd)
   return NULL;
 }
 
-EGLBoolean eglBindAPI( 	EGLenum  api) {
-    return primus.afns.eglBindAPI(api);
+EGLBoolean eglBindAPI(EGLenum  api) {
+  return primus.afns.eglBindAPI(api);
 }
 
 EGLContext eglCreateContext(EGLDisplay display, EGLConfig config, EGLContext share_context,
                             EGLint const *attrib_list)
 {
-    printf("primus eglCreateContext\n");
-    //EGLConfig acfg;
+  printf("primus eglCreateContext\n");
+  //EGLConfig acfg;
   //match_config(0, config, &acfg);
   EGLContext actx = primus.afns.eglCreateContext(primus.adisplay, config, share_context, attrib_list);
   die_if ( actx == EGL_NO_CONTEXT, "eglCreateContext failed.\n");
@@ -787,14 +693,12 @@ EGLBoolean eglDestroyContext(EGLDisplay dpy, EGLContext ctx)
 
 static EGLSurface create_pbuffer(EGLDisplay dpy, DrawableInfo &di)
 {
-/* Pixel buffer attributes. */
-  EGLint pbattrs[] =
-    {
-        EGL_WIDTH, di.width,
-        EGL_HEIGHT, di.height,
-        EGL_NONE
-    };
-  //int pbattrs[] = {GLX_PBUFFER_WIDTH, di.width, GLX_PBUFFER_HEIGHT, di.height, GLX_PRESERVED_CONTENTS, True, None};
+  /* Pixel buffer attributes. */
+  EGLint pbattrs[] = {
+    EGL_WIDTH, di.width,
+    EGL_HEIGHT, di.height,
+    EGL_NONE
+  };
   EGLSurface surface = primus.afns.eglCreatePbufferSurface(dpy, di.config, pbattrs);
   printf("create_pbuffer %p %d %d config=%p %p\n", dpy, di.width, di.height, di.config, surface);
 
@@ -815,7 +719,6 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
   DrawableInfo &di = primus.drawables[draw];
   if (!known)
   {
-      printf("!known\n");
     // Drawable is a plain X Window. Get the Config from the context
     if (ctx) {
       di.config = primus.contexts[ctx].config;
@@ -839,7 +742,7 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
   }
   else if (ctx && di.config != primus.contexts[ctx].config)
   {
-      printf("case 2 %p %p\n", di.config, primus.contexts[ctx].config);
+    printf("case 2 %p %p\n", di.config, primus.contexts[ctx].config);
     if (di.pbuffer)
     {
       primus_warn("recreating incompatible pbuffer\n");
@@ -850,15 +753,15 @@ static EGLSurface lookup_pbuffer(EGLDisplay dpy, EGLSurface draw, EGLContext ctx
     di.config = primus.contexts[ctx].config;
   }
   if (!di.pbuffer) {
-      di.pbuffer = create_pbuffer(dpy, di);
-      di.maincontext = ctx;
+    di.pbuffer = create_pbuffer(dpy, di);
+    di.maincontext = ctx;
   }
   return di.pbuffer;
 }
 
 EGLBoolean eglMakeCurrent(EGLDisplay dpy, EGLSurface draw, EGLSurface read, EGLContext ctx)
 {
-    printf("primus eglMakeCurrent %p, %p, %p, %p\n", dpy, draw, read, ctx);
+  printf("primus eglMakeCurrent %p, %p, %p, %p\n", dpy, draw, read, ctx);
   EGLSurface pbuffer = lookup_pbuffer(dpy, draw, ctx);
   printf("pbuffer=%p\n", pbuffer);
   tsdata.make_current(primus.ddpy, draw, read); //FIXME: check dpy 
@@ -926,47 +829,45 @@ EGLBoolean eglSwapBuffers(EGLDisplay dpy, EGLSurface drawable)
 
 /* FIXME: This removes the need for passthru hacks I think */
 EGLDisplay eglGetDisplay(EGLNativeDisplayType display_id) {
-    printf("primus eglGetDisplay\n");
-    /* FIXME: Why the hell does that even work?!?!?! */
-    //primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
-    primus.ddpy = display_id;
-    primus.ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)display_id);
+  printf("primus eglGetDisplay\n");
+  /* FIXME: Why the hell does that even work?!?!?! */
+  //primus.adisplay = primus.afns.eglGetDisplay((EGLNativeDisplayType)display_id);
+  primus.ddpy = display_id;
+  primus.ddisplay = primus.dfns.eglGetDisplay((EGLNativeDisplayType)display_id);
 
-   EGLint majorVersion;
-   EGLint minorVersion;
-   EGLint ncfg;
-   EGLBoolean ret;
-    EGLint attrs[] =
-        {
-            EGL_RED_SIZE,       8,
-            EGL_GREEN_SIZE,     8,
-            EGL_BLUE_SIZE,      8,
-            EGL_ALPHA_SIZE,     EGL_DONT_CARE,
-            EGL_DEPTH_SIZE,     EGL_DONT_CARE,
-            EGL_STENCIL_SIZE,   EGL_DONT_CARE,
-            EGL_SAMPLE_BUFFERS, 0,
-            EGL_NONE
-        };
+  EGLint majorVersion;
+  EGLint minorVersion;
+  EGLint ncfg;
+  EGLBoolean ret;
+  EGLint attrs[] = {
+    EGL_RED_SIZE,       8,
+    EGL_GREEN_SIZE,     8,
+    EGL_BLUE_SIZE,      8,
+    EGL_ALPHA_SIZE,     EGL_DONT_CARE,
+    EGL_DEPTH_SIZE,     EGL_DONT_CARE,
+    EGL_STENCIL_SIZE,   EGL_DONT_CARE,
+    EGL_SAMPLE_BUFFERS, 0,
+    EGL_NONE
+  };
 
+  ret = primus.dfns.eglInitialize(primus.ddisplay, &majorVersion, &minorVersion);
+  die_if(!ret, "broken EGL on main X display (eglInitialize)\n");
 
-    ret = primus.dfns.eglInitialize(primus.ddisplay, &majorVersion, &minorVersion);
-    die_if(!ret, "broken EGL on main X display (eglInitialize)\n");
-
-    /* FIXME: Do we need the list of config? Or just the first one? */
+  /* FIXME: Do we need the list of config? Or just the first one? */
 /*    die_if(!eglGetConfigs(ddpy, NULL, 0, &ncfg),
       "broken EGL on main X display\n");*/
-    primus.dconfigs = (EGLConfig*)malloc(sizeof(EGLConfig));
-    ret = primus.dfns.eglGetConfigs(primus.ddisplay, NULL, 0, &ncfg);
-    die_if(!ret, "broken EGL on main X display (getconfig)\n");
-    ret = primus.dfns.eglChooseConfig(primus.ddisplay, attrs, primus.dconfigs, 1, &ncfg);
-    die_if(!ret || ncfg == 0, "broken EGL on main X display (chooseconfig)\n");
+  primus.dconfigs = (EGLConfig*)malloc(sizeof(EGLConfig));
+  ret = primus.dfns.eglGetConfigs(primus.ddisplay, NULL, 0, &ncfg);
+  die_if(!ret, "broken EGL on main X display (getconfig)\n");
+  ret = primus.dfns.eglChooseConfig(primus.ddisplay, attrs, primus.dconfigs, 1, &ncfg);
+  die_if(!ret || ncfg == 0, "broken EGL on main X display (chooseconfig)\n");
 
-    return primus.adisplay;
+  return primus.adisplay;
 }
 
 EGLSurface eglCreateWindowSurface(EGLDisplay dpy, EGLConfig config, NativeWindowType win, EGLint const* attribList) {
-    EGLConfig dcfg;
-    match_config(1, config, &dcfg);
+  EGLConfig dcfg;
+  match_config(1, config, &dcfg);
   EGLSurface surface = primus.dfns.eglCreateWindowSurface(primus.ddisplay,
                                                           //dcfg,
                                                           primus.dconfigs[0],
@@ -1082,14 +983,14 @@ XVisualInfo *glXGetVisualFromConfig(Display *dpy, EGLConfig config)
 
 EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute, EGLint *value)
 {
-    printf("eglGetConfigAttrib\n");
-    if (attribute == EGL_NATIVE_VISUAL_ID && *value) {
-        printf("Getting visual ID.\n");
-          EGLConfig dcfg;
-          match_config(1, config, &dcfg);
-      return primus.dfns.eglGetConfigAttrib(primus.ddisplay, dcfg, attribute, value);
-    } else {
-      return primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
+  printf("eglGetConfigAttrib\n");
+  if (attribute == EGL_NATIVE_VISUAL_ID && *value) {
+    printf("Getting visual ID.\n");
+    EGLConfig dcfg;
+    match_config(1, config, &dcfg);
+    return primus.dfns.eglGetConfigAttrib(primus.ddisplay, dcfg, attribute, value);
+  } else {
+    return primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
   }
 }
 
@@ -1268,10 +1169,10 @@ asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
-    printf("non-strict Calling %s\n", #name);                                            \
-    void* val = primus.dfns.handle_valid() ? primus.dfns.dlsym(#name) : NULL; \
-    printf("Val %p\n", val);                                            \
-    return val;\
+  printf("non-strict Calling %s\n", #name);                             \
+  void* val = primus.afns.handle_valid() ? primus.afns.dlsym(#name) : NULL; \
+  printf("Val %p\n", val);                                              \
+  return val;                                                           \
 }
 #include "egl-passthru.def"
 #undef P
