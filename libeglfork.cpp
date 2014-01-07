@@ -334,7 +334,6 @@ static void* display_work(void *vd)
   int width, height;
   static const char *state_names[] = {"wait", "upload", "draw", "swap", NULL};
   Profiler profiler("display", state_names);
-  //Display *ddpy = XOpenDisplay(NULL);
   Display * ddpy = primus.ddpy;
   assert(di.kind == di.XWindow || di.kind == di.Window);
   XSelectInput(ddpy, di.window, StructureNotifyMask);
@@ -352,8 +351,6 @@ static void* display_work(void *vd)
     profiler.tick(true);
     if (di.d.reinit)
     {
-      //FIXME: Memory leak!
-      //free(imgbuffer);
       if (imgnative)
         XDestroyImage(imgnative);
       if (di.d.reinit == di.SHUTDOWN)
@@ -435,12 +432,15 @@ static void* display_work(void *vd)
     XFlush(ddpy);
 
     profiler.tick();
+    /* FIXME: This is not working at all */
     for (int pending = XPending(ddpy); pending > 0; pending--)
     {
       XEvent event;
       XNextEvent(ddpy, &event);
-      if (event.type == ConfigureNotify)
+      printf("Got event! %d\n", event.type);
+      if (event.type == ConfigureNotify) {
 	di.update_geometry(event.xconfigure.width, event.xconfigure.height);
+      }
     }
     if (primus.sync)
       sem_post(&di.d.relsem); // Unlock only after drawing
@@ -478,6 +478,8 @@ static void* readback_work(void *vd)
   ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
   printf("readback eglMakeCurrent ret=%d\n", ret);
   die_if(!ret, "eglMakeCurrent failed in readback thread\n");
+
+  /* FIXME: Does that make any sense? */
   primus.afns.glReadBuffer(GL_FRONT);
 
   ret = primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
@@ -493,8 +495,6 @@ static void* readback_work(void *vd)
     if (di.r.reinit)
     {
       printf("readback_reinit\n");
-      free(buffers[0]);
-      free(buffers[1]);
       clock_gettime(CLOCK_REALTIME, &tp);
       tp.tv_sec  += 1;
       // Wait for D worker, if active
@@ -510,6 +510,10 @@ static void* readback_work(void *vd)
       sem_wait(&di.d.relsem); // Wait until reinit was completed
       if (!primus.sync)
 	sem_post(&di.d.relsem); // Unlock as no PBO is currently mapped
+
+      free(buffers[0]);
+      free(buffers[1]);
+
       if (di.r.reinit == di.SHUTDOWN)
       {
 	primus.afns.eglMakeCurrent(primus.adisplay, 0, 0, NULL);
