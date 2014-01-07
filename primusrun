@@ -22,8 +22,10 @@ export PRIMUS_DISPLAY=${PRIMUS_DISPLAY:-:0}
 # $LIB will be interpreted by the dynamic linker
 # export PRIMUS_libGLa=${PRIMUS_libGLa:-'/usr/$LIB/nvidia/libGL.so.1'}
 
-export PRIMUS_libEGLa=${PRIMUS_libEGLa:-'/usr/lib/libEGL.so.1'}
-export PRIMUS_libGLESv2a=${PRIMUS_libGLESv2a:-'/usr/lib/libGLESv2.so.2'}
+#export PRIMUS_libEGLa=${PRIMUS_libEGLa:-'/usr/lib/libEGL.so.1'}
+#export PRIMUS_libGLESv2a=${PRIMUS_libGLESv2a:-'/usr/lib/libGLESv2.so.2'}
+export PRIMUS_libEGLa=${PRIMUS_libEGLa:-'/home/nicolas/Downloads/mali/libEGL.so.1'}
+export PRIMUS_libGLESv2a=${PRIMUS_libGLESv2a:-'/home/nicolas/Downloads/mali/libGLESv2.so.2'}
 
 # "Displaying" libGL
 # export PRIMUS_libGLd=${PRIMUS_libGLd:-'/usr/$LIB/libGL.so.1'}
