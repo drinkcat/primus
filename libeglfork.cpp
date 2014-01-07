@@ -53,20 +53,10 @@ static void *real_dlsym(void *handle, const char *symbol)
 struct CapturedFns {
   void *handle[2]; /* 0: EGL, 1: GLESv2 */
 
-  /* First try to load the symbol with eglGetProcAddress, then fallback on dlsym */
-  inline void *egldlsym(const char *symbol)
-  {
-    void* p = (void*)this->eglGetProcAddress(symbol);
-    if (p)
-      return p;
-    return real_dlsym(handle[1], symbol);
-  }
-
   // Declare functions as fields of the struct
 #define DEF_EGL_PROTO(ret, name, args, ...) ret (*name) args;
 #include "egl-reimpl.def"
-#include "gles-passthru.def" 
-#include "gles-needed.def"
+#include "gles-passthru.def"
 #undef DEF_EGL_PROTO
   CapturedFns(const char *libegl, const char *libglesv2)
   {
@@ -79,11 +69,10 @@ printf("%s=%p\n", #name, name);                 \
 #include "egl-reimpl.def"
 #undef DEF_EGL_PROTO
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
-name = (ret (*) args)egldlsym(#name); \
+name = (ret (*) args)this->eglGetProcAddress(#name); \
 printf("B %s=%p\n", #name, name);                 \
   } while (0);
 #include "gles-passthru.def"
-#include "gles-needed.def"
 #undef DEF_EGL_PROTO
   }
   ~CapturedFns()
@@ -948,14 +937,12 @@ int glXGetConfig(Display *dpy, XVisualInfo *visual, int attrib, int *value)
 
 // OpenGL forwarders
 #define DEF_EGL_PROTO(ret, name, par, ...) \
-static ret l##name par \
-{ return primus.afns.name(__VA_ARGS__); } \
 asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
-  /*printf("OGL Calling %s\n", #name);*/                                \
-    void* val = primus.afns.handle[1] ? real_dlsym(primus.afns.handle[1], #name) : (void*)l##name; \
+  printf("OGL Calling %s\n", #name);                                \
+  void* val = (void*)primus.afns.eglGetProcAddress(#name);                   \
         /*printf("Val %p\n", val);   */                                 \
     return val;\
 }
