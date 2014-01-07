@@ -411,7 +411,6 @@ static void* display_work(void *vd)
   Profiler profiler("display", state_names);
   Display * ddpy = primus.ddpy;
   assert(di.kind == di.XWindow || di.kind == di.Window);
-  XSelectInput(ddpy, di.window, StructureNotifyMask);
   note_geometry(ddpy, di.window, &width, &height);
   di.update_geometry(width, height);
 
@@ -464,8 +463,9 @@ static void* display_work(void *vd)
 
     XPutImage(ddpy, di.window, gc, imgnative, 0, 0, 0, 0, width, height);
 
-    /* Listening to events does not work (we compete against the application!) */
     profiler.tick();
+    /* Listening to events does not work (we compete against the application!):
+     * just check for window size after each frame. */
     int nwidth, nheight;
     note_geometry(ddpy, di.window, &nwidth, &nheight);
     di.update_geometry(nwidth, nheight);
@@ -485,8 +485,7 @@ static void* readback_work(void *vd)
   int width = 0, height = 0;
   int cbuf = 0;
   void* buffers[2] = {NULL, NULL};
-  unsigned sleep_usec = 0;
-  static const char *state_names[] = {"app", "sleep", "map", "wait", NULL};
+  static const char *state_names[] = {"app", "sleep", "readpix", "wait", NULL};
   Profiler profiler("readback", state_names);
   struct timespec tp;
   if (!primus.sync)
@@ -560,6 +559,8 @@ static void* readback_work(void *vd)
 
     primus.afns.glWaitSync(di.sync, 0, GL_TIMEOUT_IGNORED);
 
+    profiler.tick();
+    /* readpix */
     GLint ext_format, ext_type;
     glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_FORMAT, &ext_format);
     glGetIntegerv(GL_IMPLEMENTATION_COLOR_READ_TYPE, &ext_type);
@@ -570,21 +571,16 @@ static void* readback_work(void *vd)
     di.pixelformat = ext_format;
     di.pixeltype = ext_type;
 
-    primus.afns.glReadPixels(0, 0, width, height, ext_format, ext_type, buffers[cbuf]);
+    primus.afns.glReadPixels(0, 0, width, height, di.pixelformat, di.pixeltype, buffers[cbuf]);
+    GLenum error = glGetError();
+    die_if(error, "glReadPixels error: %x\n", error);
     if (!primus.sync) {
       //sem_post(&di.r.relsem); // Unblock main thread as soon as possible
     }
-    usleep(sleep_usec);
-    profiler.tick();
-    /* map */
     if (primus.sync == 1) // Get the previous framebuffer
       di.pixeldata = buffers[cbuf];
     else
       di.pixeldata = buffers[cbuf^1];
-    double map_time = Profiler::get_timestamp();
-    //FIXME: Absurd!
-    map_time = Profiler::get_timestamp() - map_time;
-    sleep_usec = (map_time * 1e6 + sleep_usec) * primus.autosleep / 100;
     profiler.tick();
     /* wait */
     clock_gettime(CLOCK_REALTIME, &tp);
