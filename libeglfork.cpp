@@ -875,10 +875,11 @@ EGLBoolean eglGetConfigAttrib(EGLDisplay dpy, EGLConfig config, EGLint attribute
 {
   printf("eglGetConfigAttrib\n");
   if (attribute == EGL_NATIVE_VISUAL_ID && *value) {
-    /* FIXME? */
     printf("Getting visual ID.\n");
-    //return primus.dfns.eglGetConfigAttrib(primus.ddisplay, dcfg, attribute, value);
-    return primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
+    /* FIXME: Is this acceptable? */
+    Visual* vis = DefaultVisual(primus.ddpy, 0);
+    *value = (EGLint)XVisualIDFromVisual(vis);
+    return EGL_TRUE;
   } else {
     return primus.afns.eglGetConfigAttrib(primus.adisplay, config, attribute, value);
   }
