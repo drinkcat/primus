@@ -69,12 +69,15 @@ struct CapturedFns {
   // Declare functions as fields of the struct
 #define DEF_EGL_PROTO(ret, name, args, ...) ret (*name) args;
 #include "egl-reimpl.def"
+#include "egl-passthru.def"
 #include "gles-passthru.def"
 #undef DEF_EGL_PROTO
   CapturedFns(const char *libegl, const char *libglesv2)
   {
     handle[0] = mdlopen(libegl, RTLD_LAZY);
     handle[1] = mdlopen(libglesv2, RTLD_LAZY);
+    die_if(!handle[0], "Cannot load %s\n", libegl);
+    die_if(!handle[1], "Cannot load %s\n", libglesv2);
 #define DEF_EGL_PROTO(ret, name, args, ...) do { \
 name = (ret (*) args)real_dlsym(handle[0], #name); \
   } while (0);
@@ -502,7 +505,8 @@ static void* display_work(void *vd)
 static void* readback_work(void *vd)
 {
   printf("primus readback_work\n");
-  EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 2, EGL_NONE, EGL_NONE };
+  /* FIXME: Detect EGL version automatically */
+  EGLint contextAttribs[] = { EGL_CONTEXT_CLIENT_VERSION, 3, EGL_NONE, EGL_NONE };
   EGLSurface drawable = (EGLSurface)vd;
   DrawableInfo &di = primus.drawables[drawable];
   int width = 0, height = 0;
@@ -523,7 +527,6 @@ static void* readback_work(void *vd)
   die_if(!context,
          "failed to acquire rendering context for readback thread\n");
   ret = primus.afns.eglMakeCurrent(primus.adisplay, di.pbuffer, di.pbuffer, context);
-  printf("readback eglMakeCurrent ret=%d\n", ret);
   die_if(!ret, "eglMakeCurrent failed in readback thread\n");
 
   /* FIXME: Does that make any sense? */
@@ -847,7 +850,9 @@ EGLBoolean eglQuerySurface(EGLDisplay dpy, EGLSurface draw, EGLint attribute, EG
   return primus.afns.eglQuerySurface(primus.adpy, lookup_pbuffer(dpy, draw, NULL), attribute, value);
 }
 
-// OpenGL forwarders
+/* FIXME: add eglGetCurrentSurface */
+
+// OpenGL ES forwarders
 #define DEF_EGL_PROTO(ret, name, par, ...) \
 static ret l##name par \
 { return primus.afns.name(__VA_ARGS__); } \
@@ -861,13 +866,19 @@ void *ifunc_##name(void) \
 #include "gles-passthru.def"
 #undef DEF_EGL_PROTO
 
-// GLX extensions
-#if 0
-int glXSwapIntervalSGI(int interval)
-{
-  return 1; // Indicate failure to set swapinterval
+// EGL forwarders
+#define DEF_EGL_PROTO(ret, name, par, ...) \
+static ret l##name par \
+{ return primus.afns.name(__VA_ARGS__); } \
+asm(".type " #name ", %gnu_indirect_function"); \
+void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
+void *ifunc_##name(void) \
+{ \
+  void* val = primus.afns.handle[0] ? primus.afns.egldlsym(#name) : (void*)l##name; \
+  return val;                                                         \
 }
-#endif
+#include "egl-passthru.def"
+#undef DEF_EGL_PROTO
 
 __eglMustCastToProperFunctionPointerType eglGetProcAddress(const char *procName)
 {
@@ -937,19 +948,18 @@ const char *glXQueryExtensionsString(Display *dpy, int screen)
 }
 #endif
 
+#ifndef PRIMUS_STRICT
+#warning Enabled extra EGL functions pass-thru
 #define P(name) \
 asm(".type " #name ", %gnu_indirect_function"); \
 void *ifunc_##name(void) asm(#name) __attribute__((visibility("default"))); \
 void *ifunc_##name(void) \
 { \
-  printf("non-strict Calling %s\n", #name);                             \
+  printf("passthru calling %s %p\n", #name, primus.afns.handle[0]);   \
   void* val = primus.afns.handle[0] ? real_dlsym(primus.afns.handle[0], #name) : NULL; \
-  printf("Val %p\n", val);                                              \
+  printf("passthru val %p\n", val);                                     \
   return val;                                                           \
 }
-#include "egl-passthru.def"
-#ifndef PRIMUS_STRICT
-#warning Enabled extra EGL functions pass-thru
 #include "egl-passthru-extra.def"
-#endif
 #undef P
+#endif

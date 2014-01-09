@@ -34,11 +34,11 @@ CXXFLAGS += -DPRIMUS_libGLESv2a='"$(PRIMUS_libGLESv2a)"'
 all: $(LIBDIR)/libGL.so.1 $(LIBDIR)/libGLESv2.so.2
 	
 
-$(LIBDIR)/libGL.so.1: libglfork.cpp *.def Makefile
+$(LIBDIR)/libGL.so.1: libglfork.cpp Makefile
 	mkdir -p $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt
 
-$(LIBDIR)/libGLESv2.so.2: libeglfork.cpp *.def Makefile
+$(LIBDIR)/libGLESv2.so.2: libeglfork.cpp Makefile
 	mkdir -p $(LIBDIR)
-	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lpthread -lrt -O0 -g
+	$(CXX) $(CXXFLAGS) -fvisibility=hidden -fPIC -shared -Wl,-Bsymbolic -o $@ $< -lX11 -lXext -lpthread -lrt -O3
 	ln -sf libGLESv2.so.2 lib/libEGL.so.1
